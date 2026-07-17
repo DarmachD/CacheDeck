@@ -11,6 +11,9 @@ services:
       TARGET_CONTAINER: LANCache-Prefill
       PREFILL_DIR: /lancacheprefill/SteamPrefill
       PREFILL_USER: prefill
-      CACHEDECK_VERSION: "0.3.0"
+      PREFILL_STATE_DIR: /tmp/cachedeck
+      CACHEDECK_CONFIG_DIR: /config
+      AUTO_RESUME_INTERRUPTED: "false"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./cachedeck-config:/config

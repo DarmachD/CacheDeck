@@ -9,11 +9,13 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/DarmachD/CacheDeck/issues</Support>
   <Project>https://github.com/DarmachD/CacheDeck</Project>
-  <Overview>Browser controls and an interactive console for an existing SteamPrefill container.</Overview>
+  <Overview>Persistent browser controls, reconnectable live progress, scheduling information and diagnostics for an existing SteamPrefill container.</Overview>
   <Description>
-    CacheDeck provides a cleaner browser interface for SteamPrefill and LANCache.
-    Select games, start prefill jobs, inspect status, view recent logs and use the
-    interactive SteamPrefill terminal without opening an Unraid console.
+    CacheDeck provides a browser interface for SteamPrefill and LANCache.
+    Select games, launch detached prefill jobs, reconnect to live output, review
+    run history, inspect the configured schedule and collect diagnostics without
+    opening an Unraid terminal. Prefills continue after the browser or controlling
+    computer disconnects.
   </Description>
   <Category>Tools:Utilities Network:Other</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
@@ -40,11 +42,22 @@
     Target="/var/run/docker.sock"
     Default="/var/run/docker.sock"
     Mode="rw"
-    Description="Required so CacheDeck can execute commands in SteamPrefill."
+    Description="Required so CacheDeck can inspect and execute commands in SteamPrefill."
     Type="Path"
     Display="always"
     Required="true"
     Mask="false">/var/run/docker.sock</Config>
+
+  <Config
+    Name="Persistent Config"
+    Target="/config"
+    Default="/mnt/user/appdata/cachedeck"
+    Mode="rw"
+    Description="Persistent CacheDeck run history and application state."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/cachedeck</Config>
 
   <Config
     Name="SteamPrefill Container"
@@ -78,4 +91,37 @@
     Display="advanced"
     Required="false"
     Mask="false">prefill</Config>
+
+  <Config
+    Name="Target Job State Directory"
+    Target="PREFILL_STATE_DIR"
+    Default="/tmp/cachedeck"
+    Mode=""
+    Description="Writable directory inside SteamPrefill used for the active detached job and live output."
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">/tmp/cachedeck</Config>
+
+  <Config
+    Name="Automatic Resume"
+    Target="AUTO_RESUME_INTERRUPTED"
+    Default="false"
+    Mode=""
+    Description="When true, CacheDeck makes one automatic restart attempt after a managed prefill is interrupted by a target-container restart."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">false</Config>
+
+  <Config
+    Name="History Limit"
+    Target="HISTORY_LIMIT"
+    Default="20"
+    Mode=""
+    Description="Number of completed or detected runs retained in /config."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">20</Config>
 </Container>
