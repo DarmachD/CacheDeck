@@ -6,13 +6,11 @@
   <meta name="theme-color" content="#0a0f19">
   <title>CacheDeck</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <link rel="stylesheet" href="/static/vendor/xterm.css">
   <style>
     :root {
       color-scheme: dark;
       --background: #080c14;
-      --background-soft: #0d1420;
       --panel: rgba(17, 24, 39, .94);
       --panel-soft: #151f30;
       --border: #28364c;
@@ -24,11 +22,10 @@
       --success: #52d88d;
       --danger: #ff7180;
       --warning: #f5c451;
+      --info: #70b7e5;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       min-height: 100vh;
@@ -37,15 +34,11 @@
         radial-gradient(circle at 15% -10%, #21334e 0, transparent 35%),
         var(--background);
       color: var(--text);
-      font-family:
-        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-        "Segoe UI", sans-serif;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    button,
-    input {
-      font: inherit;
-    }
+    button, input { font: inherit; }
 
     button {
       min-height: 42px;
@@ -56,48 +49,18 @@
       color: var(--text);
       font-weight: 700;
       cursor: pointer;
-      transition:
-        background .15s ease,
-        border-color .15s ease,
-        transform .15s ease;
+      transition: background .15s ease, border-color .15s ease, transform .15s ease;
     }
 
-    button:hover {
-      border-color: #526783;
-      background: #293950;
-    }
+    button:hover { border-color: #526783; background: #293950; }
+    button:active { transform: translateY(1px); }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    button.primary { border-color: var(--accent); background: var(--accent); color: #211205; }
+    button.primary:hover { border-color: var(--accent-hover); background: var(--accent-hover); }
+    button.danger { border-color: #763c47; background: #3e222a; color: #ffc0c7; }
+    button.ghost { background: transparent; }
 
-    button:active {
-      transform: translateY(1px);
-    }
-
-    button:disabled {
-      cursor: not-allowed;
-      opacity: .55;
-    }
-
-    button.primary {
-      border-color: var(--accent);
-      background: var(--accent);
-      color: #211205;
-    }
-
-    button.primary:hover {
-      border-color: var(--accent-hover);
-      background: var(--accent-hover);
-    }
-
-    button.danger {
-      border-color: #763c47;
-      background: #3e222a;
-      color: #ffc0c7;
-    }
-
-    main {
-      width: min(1420px, 100%);
-      margin: 0 auto;
-      padding: 22px;
-    }
+    main { width: min(1480px, 100%); margin: 0 auto; padding: 22px; }
 
     .topbar {
       display: flex;
@@ -107,12 +70,7 @@
       margin-bottom: 18px;
     }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-
+    .brand { display: flex; align-items: center; gap: 14px; }
     .brand-icon {
       display: grid;
       width: 54px;
@@ -125,37 +83,14 @@
       color: #1c1106;
       box-shadow: 0 12px 35px rgba(0, 0, 0, .35);
     }
+    .brand-icon svg { width: 31px; height: 31px; }
 
-    .brand-icon svg {
-      width: 31px;
-      height: 31px;
-    }
-
-    h1,
-    h2,
-    p {
-      margin-top: 0;
-    }
-
-    h1 {
-      margin-bottom: 4px;
-      font-size: clamp(1.45rem, 3vw, 1.9rem);
-      line-height: 1.1;
-    }
-
-    h2 {
-      margin-bottom: 13px;
-      font-size: 1rem;
-    }
-
-    .subtitle,
-    .muted {
-      color: var(--muted);
-    }
-
-    .subtitle {
-      margin: 0;
-    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 4px; font-size: clamp(1.45rem, 3vw, 1.9rem); line-height: 1.1; }
+    h2 { margin-bottom: 13px; font-size: 1rem; }
+    h3 { margin-bottom: 10px; font-size: .92rem; }
+    .subtitle, .muted { color: var(--muted); }
+    .subtitle { margin: 0; }
 
     .status-pill {
       display: inline-flex;
@@ -168,38 +103,13 @@
       background: var(--panel-soft);
       white-space: nowrap;
     }
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warning); }
+    .status-pill.online { border-color: #2d6849; color: #a8efc5; }
+    .status-pill.online .status-dot { background: var(--success); }
+    .status-pill.offline { border-color: #71404a; color: #ffc1c8; }
+    .status-pill.offline .status-dot { background: var(--danger); }
 
-    .status-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: var(--warning);
-    }
-
-    .status-pill.online {
-      border-color: #2d6849;
-      color: #a8efc5;
-    }
-
-    .status-pill.online .status-dot {
-      background: var(--success);
-    }
-
-    .status-pill.offline {
-      border-color: #71404a;
-      color: #ffc1c8;
-    }
-
-    .status-pill.offline .status-dot {
-      background: var(--danger);
-    }
-
-    .layout {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 350px;
-      gap: 16px;
-    }
-
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 370px; gap: 16px; }
     .card {
       margin-bottom: 16px;
       border: 1px solid var(--border);
@@ -208,60 +118,58 @@
       background: var(--panel);
       box-shadow: 0 16px 45px rgba(0, 0, 0, .23);
     }
+    .card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .card-heading h2 { margin-bottom: 0; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 9px; }
+    .button-row + pre, .button-row + .notice { margin-top: 12px; }
 
-    .button-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 9px;
-    }
-
-    .terminal-shell {
-      overflow: hidden;
-      border: 1px solid var(--border-soft);
-      border-radius: 12px;
-      background: #080d15;
-    }
-
-    #terminal {
-      height: 650px;
-      padding: 8px;
-    }
-
-    .stats {
-      margin: 0;
-    }
-
-    .stat {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 12px;
-      border-bottom: 1px solid var(--border-soft);
-      padding: 10px 0;
-    }
-
-    .stat:first-child {
-      padding-top: 0;
-    }
-
-    .stat:last-child {
-      border-bottom: 0;
-      padding-bottom: 0;
-    }
-
-    .stat dt {
+    .job-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 5px 10px;
       color: var(--muted);
-    }
-
-    .stat dd {
-      max-width: 205px;
-      margin: 0;
-      overflow-wrap: anywhere;
-      text-align: right;
+      font-size: .85rem;
       font-weight: 700;
+      text-transform: capitalize;
+    }
+    .job-state::before { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); content: ""; }
+    .job-state.running { border-color: #2d6849; color: #a8efc5; }
+    .job-state.running::before { background: var(--success); box-shadow: 0 0 0 5px rgba(82,216,141,.1); }
+    .job-state.completed, .job-state.finished { border-color: #315c78; color: #b8ddf4; }
+    .job-state.completed::before, .job-state.finished::before { background: var(--info); }
+    .job-state.failed, .job-state.unavailable { border-color: #71404a; color: #ffc1c8; }
+    .job-state.failed::before, .job-state.unavailable::before { background: var(--danger); }
+    .job-state.stopped, .job-state.interrupted { border-color: #6f5c2f; color: #f7d98a; }
+    .job-state.stopped::before, .job-state.interrupted::before { background: var(--warning); }
+
+    .job-message { margin: 13px 0; color: var(--muted); }
+    .job-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .job-detail {
+      min-width: 0;
+      border: 1px solid var(--border-soft);
+      border-radius: 11px;
+      padding: 10px;
+      background: #101827;
+    }
+    .job-detail span { display: block; margin-bottom: 5px; color: var(--muted); font-size: .78rem; }
+    .job-detail strong { display: block; overflow-wrap: anywhere; font-size: .88rem; }
+
+    .activity-line {
+      margin: 0 0 12px;
+      border-left: 3px solid var(--accent);
+      padding: 9px 11px;
+      background: #101827;
+      color: #dce8f8;
+      font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      font-size: .82rem;
+      overflow-wrap: anywhere;
     }
 
     pre {
-      max-height: 300px;
+      max-height: 330px;
       margin: 0;
       overflow: auto;
       border: 1px solid var(--border-soft);
@@ -269,91 +177,101 @@
       padding: 11px;
       background: #090e17;
       color: #d7e2f2;
-      font-family:
-        "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
       font-size: .82rem;
       line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
     }
+    #prefill-output { min-height: 290px; max-height: 560px; white-space: pre; word-break: normal; }
+    #action-output[hidden], [hidden] { display: none !important; }
 
-    #action-output[hidden] {
-      display: none;
+    .log-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+    .log-toolbar button { min-height: 34px; padding: 6px 10px; font-size: .82rem; }
+
+    .card.log-expanded {
+      position: fixed;
+      z-index: 100;
+      inset: 12px;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      background: #0c121d;
     }
+    .card.log-expanded #prefill-output { flex: 1; max-height: none; }
+    body.no-scroll { overflow: hidden; }
 
-    .help {
-      color: var(--muted);
-      font-size: .93rem;
-      line-height: 1.55;
-    }
-
-    .help p:last-child {
-      margin-bottom: 0;
-    }
-
-    .help strong {
-      color: var(--text);
-    }
-
-    .connection {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--muted);
-      font-size: .88rem;
-    }
-
-    .connection::before {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--danger);
-      content: "";
-    }
-
-    .connection.connected::before {
-      background: var(--success);
-    }
-
-    .card-heading {
+    details.card { padding: 0; }
+    details.card > summary {
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 10px;
-      margin-bottom: 13px;
+      padding: 16px;
+      cursor: pointer;
+      font-weight: 800;
+      list-style: none;
+    }
+    details.card > summary::-webkit-details-marker { display: none; }
+    details.card > summary::after { color: var(--muted); content: "Open"; font-size: .8rem; }
+    details.card[open] > summary::after { content: "Close"; }
+    .details-body { padding: 0 16px 16px; }
+
+    .terminal-shell { overflow: hidden; border: 1px solid var(--border-soft); border-radius: 12px; background: #080d15; }
+    #terminal { height: 650px; padding: 8px; }
+    .connection { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .88rem; }
+    .connection::before { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); content: ""; }
+    .connection.connected::before { background: var(--success); }
+
+    .stats { margin: 0; }
+    .stat { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; border-bottom: 1px solid var(--border-soft); padding: 10px 0; }
+    .stat:first-child { padding-top: 0; }
+    .stat:last-child { border-bottom: 0; padding-bottom: 0; }
+    .stat dt { color: var(--muted); }
+    .stat dd { max-width: 220px; margin: 0; overflow-wrap: anywhere; text-align: right; font-weight: 700; }
+
+    .history { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    .history th, .history td { border-bottom: 1px solid var(--border-soft); padding: 9px 7px; text-align: left; vertical-align: top; }
+    .history th { color: var(--muted); font-weight: 700; }
+    .history tr:last-child td { border-bottom: 0; }
+    .history-wrap { overflow-x: auto; }
+
+    .diagnostic-list { display: grid; gap: 7px; margin: 12px 0; }
+    .diagnostic-item { display: grid; grid-template-columns: 16px 1fr; gap: 8px; font-size: .86rem; }
+    .diagnostic-item.ok::before { color: var(--success); content: "✓"; }
+    .diagnostic-item.bad::before { color: var(--danger); content: "×"; }
+    .diagnostic-item small { display: block; color: var(--muted); overflow-wrap: anywhere; }
+
+    .help { color: var(--muted); font-size: .93rem; line-height: 1.55; }
+    .help p:last-child { margin-bottom: 0; }
+    .help strong { color: var(--text); }
+    .danger-zone { margin-top: 14px; border: 1px solid #60343e; border-radius: 11px; background: #26171c; }
+    .danger-zone summary { cursor: pointer; padding: 11px; color: #ffc0c7; font-weight: 800; }
+    .danger-zone .danger-content { padding: 0 11px 11px; }
+
+    .toast {
+      position: fixed;
+      z-index: 200;
+      right: 18px;
+      bottom: 18px;
+      max-width: min(420px, calc(100vw - 36px));
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 11px 13px;
+      background: #172235;
+      box-shadow: 0 14px 45px rgba(0,0,0,.45);
     }
 
-    .card-heading h2 {
-      margin: 0;
+    @media (max-width: 1080px) {
+      .layout { grid-template-columns: 1fr; }
+      .job-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
-
-    @media (max-width: 980px) {
-      .layout {
-        grid-template-columns: 1fr;
-      }
-
-      #terminal {
-        height: 540px;
-      }
-    }
-
-    @media (max-width: 640px) {
-      main {
-        padding: 14px;
-      }
-
-      .topbar {
-        align-items: flex-start;
-        flex-direction: column;
-      }
-
-      .button-row button {
-        flex: 1 1 calc(50% - 9px);
-      }
-
-      #terminal {
-        height: 480px;
-      }
+    @media (max-width: 680px) {
+      main { padding: 14px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .button-row button { flex: 1 1 calc(50% - 9px); }
+      .job-grid { grid-template-columns: 1fr 1fr; }
+      #terminal { height: 480px; }
     }
   </style>
 </head>
@@ -362,261 +280,412 @@
   <header class="topbar">
     <div class="brand">
       <div class="brand-icon" aria-hidden="true">
-        <svg viewBox="0 0 32 32" fill="none">
-          <path d="M18.4 2.8 7.7 17.7h7.6L13 29.2l11.7-16.6h-7.6z"
-                fill="currentColor"/>
-        </svg>
+        <svg viewBox="0 0 32 32" fill="none"><path d="M18.4 2.8 7.7 17.7h7.6L13 29.2l11.7-16.6h-7.6z" fill="currentColor"/></svg>
       </div>
       <div>
         <h1>CacheDeck</h1>
-        <p class="subtitle">Browser controls for SteamPrefill and LANCache</p>
+        <p class="subtitle">Persistent browser controls for SteamPrefill and LANCache</p>
       </div>
     </div>
-
     <div id="status-pill" class="status-pill" aria-live="polite">
-      <span class="status-dot"></span>
-      <span id="status-text">Checking SteamPrefill…</span>
+      <span class="status-dot"></span><span id="status-text">Checking SteamPrefill…</span>
     </div>
   </header>
 
   <div class="layout">
     <section>
       <div class="card">
-        <div class="card-heading">
-          <h2>Quick actions</h2>
-          <span id="terminal-status" class="connection">Terminal disconnected</span>
-        </div>
-
+        <div class="card-heading"><h2>Quick actions</h2><span id="log-status" class="connection">Live log disconnected</span></div>
         <div class="button-row">
-          <button id="select-games" class="primary" type="button">
-            Select games
-          </button>
-          <button id="start-prefill" class="primary" type="button">
-            Start prefill
-          </button>
-          <button id="show-status" type="button">
-            SteamPrefill status
-          </button>
-          <button id="refresh-logs" type="button">
-            Refresh logs
-          </button>
-          <button id="clear-terminal" type="button">
-            Clear terminal
-          </button>
-          <button id="reconnect-terminal" type="button">
-            Reconnect
-          </button>
-          <button id="clear-cache" class="danger" type="button">
-            Clear Steam cache
-          </button>
+          <button id="select-games" class="primary" type="button">Select games</button>
+          <button id="start-prefill" class="primary" type="button">Start prefill</button>
+          <button id="stop-prefill" class="danger" type="button" disabled>Stop prefill</button>
+          <button id="show-status" type="button">SteamPrefill status</button>
+          <button id="open-console" type="button">Open console</button>
+          <button id="notify-button" type="button">Notifications: off</button>
         </div>
-
         <pre id="action-output" hidden aria-live="polite"></pre>
+        <details class="danger-zone">
+          <summary>Danger zone</summary>
+          <div class="danger-content">
+            <p class="muted">Destructive or rarely used actions live here so they cannot be clicked accidentally.</p>
+            <button id="clear-cache" class="danger" type="button">Clear Steam cache</button>
+          </div>
+        </details>
       </div>
 
-      <div class="card">
-        <div class="card-heading">
-          <h2>Interactive console</h2>
-          <span class="muted">SteamPrefill runs inside the target container</span>
+      <div id="activity-card" class="card">
+        <div class="card-heading"><h2>Prefill activity</h2><span id="prefill-state" class="job-state">Checking</span></div>
+        <p id="prefill-message" class="job-message">Checking for an active SteamPrefill job…</p>
+        <div class="job-grid">
+          <div class="job-detail"><span>Started</span><strong id="prefill-started">—</strong></div>
+          <div class="job-detail"><span>Elapsed</span><strong id="prefill-elapsed">—</strong></div>
+          <div class="job-detail"><span>Finished</span><strong id="prefill-finished">—</strong></div>
+          <div class="job-detail"><span>Source</span><strong id="prefill-source">—</strong></div>
+          <div class="job-detail"><span>Exit code</span><strong id="prefill-exit-code">—</strong></div>
         </div>
-        <div class="terminal-shell">
-          <div id="terminal" aria-label="SteamPrefill terminal"></div>
+        <p id="current-activity" class="activity-line">Waiting for output…</p>
+        <div class="log-toolbar">
+          <button id="copy-prefill-log" type="button">Copy log</button>
+          <button id="download-prefill-log" type="button">Download log</button>
+          <button id="clear-prefill-view" type="button">Clear view</button>
+          <button id="expand-prefill-log" type="button">Full screen</button>
+          <button id="reconnect-prefill-log" type="button">Reconnect live log</button>
         </div>
+        <pre id="prefill-output" aria-live="polite">Waiting for output…</pre>
       </div>
+
+      <details id="console-details" class="card">
+        <summary>Interactive console <span id="terminal-status" class="connection">Not opened</span></summary>
+        <div class="details-body">
+          <div class="button-row" style="margin-bottom:10px">
+            <button id="clear-terminal" type="button">Clear terminal</button>
+            <button id="reconnect-terminal" type="button">Reconnect terminal</button>
+          </div>
+          <div class="terminal-shell"><div id="terminal" aria-label="SteamPrefill terminal"></div></div>
+        </div>
+      </details>
+
+      <details id="history-details" class="card" open>
+        <summary>Run history</summary>
+        <div class="details-body history-wrap">
+          <table class="history">
+            <thead><tr><th>Started</th><th>Source</th><th>Result</th><th>Duration</th></tr></thead>
+            <tbody id="history-body"><tr><td colspan="4" class="muted">No recorded runs yet.</td></tr></tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
     <aside>
       <div class="card">
         <h2>Connection</h2>
         <dl class="stats">
-          <div class="stat">
-            <dt>Target container</dt>
-            <dd id="target-container">—</dd>
-          </div>
-          <div class="stat">
-            <dt>Container state</dt>
-            <dd id="target-state">—</dd>
-          </div>
-          <div class="stat">
-            <dt>SteamPrefill path</dt>
-            <dd id="prefill-dir">—</dd>
-          </div>
-          <div class="stat">
-            <dt>Container user</dt>
-            <dd id="prefill-user">—</dd>
-          </div>
-          <div class="stat">
-            <dt>CacheDeck version</dt>
-            <dd id="app-version">—</dd>
-          </div>
+          <div class="stat"><dt>Target container</dt><dd id="target-container">—</dd></div>
+          <div class="stat"><dt>Container state</dt><dd id="target-state">—</dd></div>
+          <div class="stat"><dt>SteamPrefill path</dt><dd id="prefill-dir">—</dd></div>
+          <div class="stat"><dt>Container user</dt><dd id="prefill-user">—</dd></div>
+          <div class="stat"><dt>Target state</dt><dd id="prefill-state-dir">—</dd></div>
+          <div class="stat"><dt>Persistent config</dt><dd id="config-dir">—</dd></div>
+          <div class="stat"><dt>Auto-resume</dt><dd id="auto-resume">—</dd></div>
+          <div class="stat"><dt>CacheDeck version</dt><dd id="app-version">—</dd></div>
         </dl>
       </div>
 
       <div class="card">
-        <h2>How to use it</h2>
-        <div class="help">
-          <p>
-            <strong>Select games</strong> opens SteamPrefill's normal searchable
-            selector in the console.
-          </p>
-          <p>
-            <strong>Start prefill</strong> downloads or updates your saved
-            selection through the existing SteamPrefill container.
-          </p>
-          <p>
-            Keep CacheDeck LAN-only. Mounting the Docker socket gives this
-            container powerful control over Docker.
-          </p>
-        </div>
+        <div class="card-heading"><h2>Schedule</h2><button id="refresh-schedule" class="ghost" type="button">Refresh</button></div>
+        <dl class="stats">
+          <div class="stat"><dt>Cron</dt><dd id="schedule-expression">—</dd></div>
+          <div class="stat"><dt>Timezone</dt><dd id="schedule-timezone">—</dd></div>
+          <div class="stat"><dt>Next expected run</dt><dd id="schedule-next">—</dd></div>
+          <div class="stat"><dt>Last detected scheduled/external run</dt><dd id="schedule-last">—</dd></div>
+        </dl>
+        <p id="schedule-message" class="muted" style="margin:12px 0 0"></p>
       </div>
 
       <div class="card">
-        <div class="card-heading">
-          <h2>Recent SteamPrefill logs</h2>
-          <span class="muted">Auto-refreshes</span>
+        <div class="card-heading"><h2>Diagnostics</h2><button id="run-diagnostics" type="button">Run checks</button></div>
+        <div id="diagnostics-list" class="diagnostic-list"><span class="muted">Run checks before publishing or when an install misbehaves.</span></div>
+        <div class="button-row"><button id="copy-diagnostics" type="button" disabled>Copy diagnostics</button></div>
+      </div>
+
+      <details id="target-logs-details" class="card">
+        <summary>Recent target-container logs</summary>
+        <div class="details-body">
+          <div class="log-toolbar"><button id="refresh-logs" type="button">Refresh</button><button id="copy-target-logs" type="button">Copy</button></div>
+          <pre id="logs" aria-live="polite">Open this section to load logs.</pre>
         </div>
-        <pre id="logs" aria-live="polite">Loading…</pre>
+      </details>
+
+      <div class="card">
+        <h2>How it behaves</h2>
+        <div class="help">
+          <p><strong>Start prefill</strong> creates a server-side job. Closing this page or shutting the laptop does not stop it.</p>
+          <p><strong>Select games</strong> opens the normal SteamPrefill selector. The interactive console is only created when needed.</p>
+          <p>Keep CacheDeck LAN-only. Docker socket access gives the container powerful control over the host.</p>
+        </div>
       </div>
     </aside>
   </div>
 </main>
+<div id="toast" class="toast" hidden role="status"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/xterm-fit.js"></script>
 <script>
   "use strict";
 
-  let terminal;
-  let fitAddon;
-  let socket;
-  let reconnectTimer;
+  const $ = (id) => document.getElementById(id);
+  const statusPill = $("status-pill");
+  const statusText = $("status-text");
+  const actionOutput = $("action-output");
+  const prefillOutput = $("prefill-output");
+  const prefillState = $("prefill-state");
+  const prefillMessage = $("prefill-message");
+  const startPrefillButton = $("start-prefill");
+  const stopPrefillButton = $("stop-prefill");
+  const logStatus = $("log-status");
+  const activityCard = $("activity-card");
+  const currentActivity = $("current-activity");
+  const terminalStatus = $("terminal-status");
+  const consoleDetails = $("console-details");
+  const toast = $("toast");
 
-  const statusPill = document.getElementById("status-pill");
-  const statusText = document.getElementById("status-text");
-  const terminalStatus = document.getElementById("terminal-status");
-  const actionOutput = document.getElementById("action-output");
-  const logsOutput = document.getElementById("logs");
+  let terminal = null;
+  let terminalSocket = null;
+  let terminalReconnectTimer = null;
+  let pendingTerminalCommand = null;
+  let prefillLogSocket = null;
+  let prefillLogSource = "none";
+  let lastPrefillState = null;
+  let previousStateName = null;
+  let prefillRequestRunning = false;
+  let prefillUpdateRunning = false;
+  let diagnosticsText = "";
+  let targetLogsLoaded = false;
+  let toastTimer = null;
+  const logDecoder = new TextDecoder();
 
-  function setTerminalStatus(connected) {
-    terminalStatus.classList.toggle("connected", connected);
-    terminalStatus.textContent = connected
-      ? "Terminal connected"
-      : "Terminal disconnected";
+  function showToast(message) {
+    clearTimeout(toastTimer);
+    toast.textContent = message;
+    toast.hidden = false;
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 3500);
+  }
+
+  function cleanOutput(value) {
+    return value
+      .replace(/\u001b\[[0-?]*[ -\/]*[@-~]/g, "")
+      .replace(/\r(?!\n)/g, "\n");
+  }
+
+  function formatTime(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  }
+
+  function durationSeconds(startValue, finishValue = null) {
+    if (!startValue) return null;
+    const start = new Date(startValue).getTime();
+    const finish = finishValue ? new Date(finishValue).getTime() : Date.now();
+    if (!Number.isFinite(start) || !Number.isFinite(finish)) return null;
+    return Math.max(0, Math.floor((finish - start) / 1000));
+  }
+
+  function formatDuration(seconds) {
+    if (seconds === null) return "—";
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours || days) parts.push(`${hours}h`);
+    if (minutes || hours || days) parts.push(`${minutes}m`);
+    parts.push(`${secs}s`);
+    return parts.join(" ");
+  }
+
+  async function copyText(text, successMessage) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(successMessage);
+    } catch (_) {
+      const area = document.createElement("textarea");
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+      showToast(successMessage);
+    }
+  }
+
+  function notificationEnabled() {
+    try {
+      return localStorage.getItem("cachedeck.notifications") === "true";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setNotificationPreference(enabled) {
+    try {
+      localStorage.setItem("cachedeck.notifications", enabled ? "true" : "false");
+    } catch (_) {
+      // Some privacy modes disable local storage. The UI still works without it.
+    }
+  }
+
+  function updateNotificationButton() {
+    $("notify-button").textContent = `Notifications: ${notificationEnabled() ? "on" : "off"}`;
+  }
+
+  async function toggleNotifications() {
+    if (notificationEnabled()) {
+      setNotificationPreference(false);
+      updateNotificationButton();
+      return;
+    }
+    if (!("Notification" in window)) {
+      showToast("This browser does not support notifications.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      setNotificationPreference(true);
+      showToast("Completion notifications enabled.");
+    }
+    updateNotificationButton();
+  }
+
+  function notifyCompletion(data) {
+    if (!notificationEnabled() || !("Notification" in window) || Notification.permission !== "granted") return;
+    new Notification(`CacheDeck: ${data.state}`, { body: data.message || "SteamPrefill state changed." });
+  }
+
+  function setConnectionStatus(element, connected, connectedText, disconnectedText) {
+    element.classList.toggle("connected", connected);
+    element.textContent = connected ? connectedText : disconnectedText;
   }
 
   function createTerminal() {
+    if (terminal) return;
+    if (typeof Terminal === "undefined") {
+      terminalStatus.textContent = "Terminal assets unavailable";
+      return;
+    }
+    if (typeof fit === "function" && typeof Terminal.applyAddon === "function") {
+      Terminal.applyAddon(fit);
+    }
     terminal = new Terminal({
-      convertEol: true,
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
       fontSize: 14,
       scrollback: 20000,
-      theme: {
-        background: "#080d15",
-        foreground: "#edf4ff",
-        cursor: "#f28c28",
-        selectionBackground: "#3d526e"
-      }
+      theme: { background: "#080d15", foreground: "#edf4ff", cursor: "#f28c28", selection: "#3d526e" }
     });
-
-    fitAddon = new FitAddon.FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(document.getElementById("terminal"));
-    fitAddon.fit();
-
-    terminal.onData((data) => {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(data);
-      }
+    terminal.open($("terminal"));
+    if (typeof terminal.fit === "function") terminal.fit();
+    terminal.on("data", (data) => {
+      if (terminalSocket && terminalSocket.readyState === WebSocket.OPEN) terminalSocket.send(data);
     });
-
     window.addEventListener("resize", () => {
-      fitAddon.fit();
+      if (!consoleDetails.open || !terminal) return;
+      if (typeof terminal.fit === "function") terminal.fit();
       sendTerminalSize();
     });
   }
 
   function sendTerminalSize() {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    socket.send(`__RESIZE__:${terminal.cols}:${terminal.rows}`);
+    if (!terminal || !terminalSocket || terminalSocket.readyState !== WebSocket.OPEN) return;
+    terminalSocket.send(`__RESIZE__:${terminal.cols}:${terminal.rows}`);
   }
 
   function connectTerminal() {
-    clearTimeout(reconnectTimer);
-
-    if (!terminal) {
-      createTerminal();
-    }
-
-    if (socket &&
-        (socket.readyState === WebSocket.OPEN ||
-         socket.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-
+    clearTimeout(terminalReconnectTimer);
+    createTerminal();
+    if (!terminal) return;
+    if (terminalSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(terminalSocket.readyState)) return;
+    setConnectionStatus(terminalStatus, false, "Terminal connected", "Terminal connecting…");
     const protocol = location.protocol === "https:" ? "wss" : "ws";
-    socket = new WebSocket(`${protocol}://${location.host}/ws/terminal`);
-    socket.binaryType = "arraybuffer";
-
-    socket.addEventListener("open", () => {
-      setTerminalStatus(true);
-      terminal.writeln("\r\n\x1b[32mConnected to SteamPrefill.\x1b[0m");
-      fitAddon.fit();
+    terminalSocket = new WebSocket(`${protocol}://${location.host}/ws/terminal`);
+    terminalSocket.binaryType = "arraybuffer";
+    terminalSocket.onopen = () => {
+      setConnectionStatus(terminalStatus, true, "Terminal connected", "Terminal disconnected");
+      if (typeof terminal.fit === "function") terminal.fit();
       sendTerminalSize();
-      terminal.focus();
-    });
-
-    socket.addEventListener("message", (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        terminal.write(new Uint8Array(event.data));
-      } else {
-        terminal.write(event.data);
+      if (pendingTerminalCommand) {
+        terminalSocket.send(`${pendingTerminalCommand}\r`);
+        pendingTerminalCommand = null;
       }
-    });
-
-    socket.addEventListener("close", () => {
-      setTerminalStatus(false);
-      terminal.writeln("\r\n\x1b[31mTerminal disconnected.\x1b[0m");
-    });
-
-    socket.addEventListener("error", () => {
-      setTerminalStatus(false);
-    });
+      terminal.focus();
+    };
+    terminalSocket.onmessage = (event) => {
+      const data = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+      terminal.write(data);
+    };
+    terminalSocket.onerror = () => setConnectionStatus(terminalStatus, false, "Terminal connected", "Terminal error");
+    terminalSocket.onclose = () => {
+      setConnectionStatus(terminalStatus, false, "Terminal connected", "Terminal disconnected");
+      if (consoleDetails.open) terminalReconnectTimer = setTimeout(connectTerminal, 2500);
+    };
   }
 
-  function sendCommand(command) {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      actionOutput.hidden = false;
-      actionOutput.textContent =
-        "The terminal is disconnected. Press Reconnect and try again.";
+  function openConsole(command = null) {
+    consoleDetails.open = true;
+    pendingTerminalCommand = command;
+    connectTerminal();
+    setTimeout(() => consoleDetails.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
+
+  function appendPrefillLog(raw) {
+    const chunk = cleanOutput(raw);
+    const wasNearBottom = prefillOutput.scrollHeight - prefillOutput.scrollTop - prefillOutput.clientHeight < 100;
+    if (prefillOutput.textContent === "Waiting for output…" || prefillOutput.textContent === "No prefill output is available yet.") {
+      prefillOutput.textContent = "";
+    }
+    prefillOutput.textContent += chunk;
+    if (prefillOutput.textContent.length > 2500000) {
+      prefillOutput.textContent = prefillOutput.textContent.slice(-2000000);
+    }
+    const meaningful = chunk.split("\n").map((line) => line.trim()).filter(Boolean).pop();
+    if (meaningful) currentActivity.textContent = meaningful;
+    if (wasNearBottom) prefillOutput.scrollTop = prefillOutput.scrollHeight;
+  }
+
+  function closePrefillLog() {
+    if (prefillLogSocket) {
+      prefillLogSocket.onclose = null;
+      prefillLogSocket.close();
+      prefillLogSocket = null;
+    }
+    setConnectionStatus(logStatus, false, "Live log connected", "Live log disconnected");
+  }
+
+  function connectPrefillLog(source, force = false) {
+    if (!force && source === prefillLogSource && prefillLogSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(prefillLogSocket.readyState)) return;
+    closePrefillLog();
+    prefillLogSource = source || "none";
+    if (prefillLogSource === "none") {
+      if (!prefillOutput.textContent.trim()) prefillOutput.textContent = "No prefill output is available yet.";
       return;
     }
-
-    socket.send(`${command}\r`);
-    terminal.focus();
+    prefillOutput.textContent = "";
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    prefillLogSocket = new WebSocket(`${protocol}://${location.host}/ws/prefill-log?source=${encodeURIComponent(prefillLogSource)}`);
+    prefillLogSocket.binaryType = "arraybuffer";
+    prefillLogSocket.onopen = () => setConnectionStatus(logStatus, true, "Live log connected", "Live log disconnected");
+    prefillLogSocket.onmessage = (event) => {
+      const value = typeof event.data === "string" ? event.data : logDecoder.decode(event.data, { stream: true });
+      appendPrefillLog(value);
+    };
+    prefillLogSocket.onerror = () => setConnectionStatus(logStatus, false, "Live log connected", "Live log error");
+    prefillLogSocket.onclose = () => {
+      setConnectionStatus(logStatus, false, "Live log connected", "Live log disconnected");
+      if (lastPrefillState && (lastPrefillState.running || lastPrefillState.log_available)) {
+        setTimeout(() => connectPrefillLog(prefillLogSource, true), 3000);
+      }
+    };
   }
 
   async function updateHealth() {
     try {
       const response = await fetch("/api/health", { cache: "no-store" });
       const data = await response.json();
-
-      document.getElementById("target-container").textContent = data.target;
-      document.getElementById("target-state").textContent = data.status;
-      document.getElementById("prefill-dir").textContent = data.prefill_dir;
-      document.getElementById("prefill-user").textContent =
-        data.prefill_user || "Container default";
-      document.getElementById("app-version").textContent = data.version;
-
+      $("target-container").textContent = data.target;
+      $("target-state").textContent = data.status;
+      $("prefill-dir").textContent = data.prefill_dir;
+      $("prefill-user").textContent = data.prefill_user || "Container default";
+      $("prefill-state-dir").textContent = data.prefill_state_dir;
+      $("config-dir").textContent = data.config_dir;
+      $("auto-resume").textContent = data.auto_resume ? "Enabled" : "Disabled";
+      $("app-version").textContent = data.version;
       statusPill.classList.toggle("online", data.running);
       statusPill.classList.toggle("offline", !data.running);
-      statusText.textContent = data.running
-        ? `${data.target} online`
-        : `${data.target}: ${data.status}`;
-    } catch (error) {
+      statusText.textContent = data.running ? `${data.target} online` : `${data.target}: ${data.status}`;
+    } catch (_) {
       statusPill.classList.remove("online");
       statusPill.classList.add("offline");
       statusText.textContent = "CacheDeck API unavailable";
@@ -626,93 +695,240 @@
   async function runAction(action) {
     actionOutput.hidden = false;
     actionOutput.textContent = "Running…";
-
     try {
       const response = await fetch("/api/action", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action })
       });
-
       const data = await response.json();
-
       if (!response.ok) {
         actionOutput.textContent = data.detail || "The action failed.";
         return;
       }
-
-      actionOutput.textContent =
-        [data.stdout, data.stderr].filter(Boolean).join("\n") ||
+      actionOutput.textContent = [data.stdout, data.stderr].filter(Boolean).join("\n") ||
         (data.ok ? "Completed successfully." : `Exited with code ${data.code}.`);
     } catch (error) {
       actionOutput.textContent = `Request failed: ${error.message}`;
     }
   }
 
-  async function refreshLogs() {
+  function applyPrefillStatus(data) {
+    const oldState = previousStateName;
+    previousStateName = data.state;
+    lastPrefillState = data;
+    prefillState.className = `job-state ${data.state}`;
+    prefillState.textContent = data.state;
+    prefillMessage.textContent = data.message;
+    $("prefill-started").textContent = formatTime(data.started_at);
+    $("prefill-finished").textContent = formatTime(data.finished_at);
+    $("prefill-source").textContent = data.running
+      ? (data.managed ? "CacheDeck detached job" : "Scheduler / external")
+      : (data.source === "cachedeck" ? "CacheDeck" : data.source === "external" ? "Scheduler / external" : "—");
+    $("prefill-exit-code").textContent = data.exit_code === null || data.exit_code === undefined ? "—" : String(data.exit_code);
+    startPrefillButton.disabled = data.running || data.state === "unavailable";
+    stopPrefillButton.disabled = !data.running || !data.managed || prefillRequestRunning;
+    document.title = data.running ? "Running · CacheDeck" : `${data.state[0].toUpperCase()}${data.state.slice(1)} · CacheDeck`;
+    if (data.log_source && data.log_source !== prefillLogSource) connectPrefillLog(data.log_source);
+    if (!data.log_source || data.log_source === "none") closePrefillLog();
+    if (oldState === "running" && data.state !== "running") {
+      notifyCompletion(data);
+      updateHistory();
+      updateSchedule();
+    }
+    updateElapsed();
+  }
+
+  function updateElapsed() {
+    if (!lastPrefillState) return;
+    $("prefill-elapsed").textContent = formatDuration(
+      durationSeconds(lastPrefillState.started_at, lastPrefillState.running ? null : lastPrefillState.finished_at)
+    );
+  }
+
+  async function updatePrefill() {
+    if (prefillUpdateRunning || prefillRequestRunning) return;
+    prefillUpdateRunning = true;
     try {
-      const response = await fetch("/api/logs?lines=150", {
-        cache: "no-store"
-      });
+      const response = await fetch("/api/prefill/status", { cache: "no-store" });
       const data = await response.json();
-
-      if (!response.ok) {
-        logsOutput.textContent = data.detail || "Unable to read logs.";
-        return;
-      }
-
-      logsOutput.textContent =
-        [data.stdout, data.stderr].filter(Boolean).join("\n") ||
-        "No container logs are available yet.";
-      logsOutput.scrollTop = logsOutput.scrollHeight;
+      if (!response.ok) throw new Error(data.detail || "Unable to read the prefill state.");
+      applyPrefillStatus(data);
     } catch (error) {
-      logsOutput.textContent = `Unable to read logs: ${error.message}`;
+      applyPrefillStatus({
+        state: "unavailable", running: false, managed: false, source: "none",
+        started_at: null, finished_at: null, exit_code: null, log_source: "none",
+        message: `Unable to read prefill state: ${error.message}`
+      });
+    } finally {
+      prefillUpdateRunning = false;
     }
   }
 
-  document.getElementById("select-games").addEventListener("click", () => {
-    sendCommand("./SteamPrefill select-apps");
-  });
-
-  document.getElementById("start-prefill").addEventListener("click", () => {
-    sendCommand("./SteamPrefill prefill");
-  });
-
-  document.getElementById("show-status").addEventListener("click", () => {
-    runAction("status");
-  });
-
-  document.getElementById("refresh-logs").addEventListener("click", () => {
-    refreshLogs();
-  });
-
-  document.getElementById("clear-terminal").addEventListener("click", () => {
-    terminal.clear();
-    terminal.focus();
-  });
-
-  document.getElementById("reconnect-terminal").addEventListener("click", () => {
-    if (socket) {
-      socket.close();
+  async function controlPrefill(operation) {
+    if (prefillRequestRunning) return;
+    prefillRequestRunning = true;
+    startPrefillButton.disabled = true;
+    stopPrefillButton.disabled = true;
+    actionOutput.hidden = false;
+    actionOutput.textContent = operation === "start" ? "Starting detached prefill…" : "Stopping prefill…";
+    try {
+      const response = await fetch(`/api/prefill/${operation}`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) {
+        actionOutput.textContent = data.detail || `Unable to ${operation} prefill.`;
+        return;
+      }
+      actionOutput.textContent = data.message;
+      applyPrefillStatus(data.status);
+      updateHistory();
+    } catch (error) {
+      actionOutput.textContent = `Request failed: ${error.message}`;
+    } finally {
+      prefillRequestRunning = false;
+      await updatePrefill();
     }
-    reconnectTimer = setTimeout(connectTerminal, 250);
-  });
+  }
 
-  document.getElementById("clear-cache").addEventListener("click", () => {
-    const confirmed = window.confirm(
-      "Clear SteamPrefill's cache? This cannot be undone."
-    );
-    if (confirmed) {
-      runAction("clear-cache");
+  async function refreshLogs() {
+    const logs = $("logs");
+    logs.textContent = "Loading…";
+    try {
+      const response = await fetch("/api/logs?lines=250", { cache: "no-store" });
+      const data = await response.json();
+      logs.textContent = response.ok
+        ? ([data.stdout, data.stderr].filter(Boolean).join("\n") || "No container logs are available yet.")
+        : (data.detail || "Unable to read logs.");
+      logs.scrollTop = logs.scrollHeight;
+      targetLogsLoaded = true;
+    } catch (error) {
+      logs.textContent = `Unable to read logs: ${error.message}`;
     }
+  }
+
+  async function updateSchedule() {
+    try {
+      const response = await fetch("/api/schedule", { cache: "no-store" });
+      const data = await response.json();
+      $("schedule-expression").textContent = data.expression || "Not detected";
+      $("schedule-timezone").textContent = data.timezone || "UTC";
+      $("schedule-next").textContent = formatTime(data.next_run);
+      $("schedule-last").textContent = formatTime(data.last_external_run);
+      $("schedule-message").textContent = data.message || "";
+    } catch (error) {
+      $("schedule-message").textContent = `Unable to read schedule: ${error.message}`;
+    }
+  }
+
+  async function updateHistory() {
+    try {
+      const response = await fetch("/api/prefill/history", { cache: "no-store" });
+      const data = await response.json();
+      const body = $("history-body");
+      body.innerHTML = "";
+      if (!response.ok || !Array.isArray(data) || data.length === 0) {
+        body.innerHTML = '<tr><td colspan="4" class="muted">No recorded runs yet.</td></tr>';
+        return;
+      }
+      for (const record of data) {
+        const row = document.createElement("tr");
+        const duration = formatDuration(durationSeconds(record.started_at, record.finished_at || (["running", "starting"].includes(record.state) ? null : record.started_at)));
+        row.innerHTML = `<td>${escapeHtml(formatTime(record.started_at))}</td>` +
+          `<td>${escapeHtml(record.source)}</td>` +
+          `<td><span class="job-state ${escapeHtml(record.state)}">${escapeHtml(record.state)}</span></td>` +
+          `<td>${escapeHtml(duration)}</td>`;
+        body.appendChild(row);
+      }
+    } catch (_) { /* Keep the last rendered history. */ }
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+  }
+
+  async function runDiagnostics() {
+    const list = $("diagnostics-list");
+    list.innerHTML = '<span class="muted">Running checks…</span>';
+    $("copy-diagnostics").disabled = true;
+    try {
+      const response = await fetch("/api/diagnostics", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Diagnostics failed.");
+      list.innerHTML = "";
+      diagnosticsText = `${data.summary}\nGenerated: ${data.generated_at}\n`;
+      for (const check of data.checks) {
+        const item = document.createElement("div");
+        item.className = `diagnostic-item ${check.ok ? "ok" : "bad"}`;
+        item.innerHTML = `<div><strong>${escapeHtml(check.name)}</strong><small>${escapeHtml(check.detail)}</small></div>`;
+        list.appendChild(item);
+        diagnosticsText += `${check.ok ? "PASS" : "FAIL"} ${check.name}: ${check.detail}\n`;
+      }
+      $("copy-diagnostics").disabled = false;
+    } catch (error) {
+      list.innerHTML = `<span class="muted">Unable to run diagnostics: ${escapeHtml(error.message)}</span>`;
+    }
+  }
+
+  $("select-games").addEventListener("click", () => openConsole("./SteamPrefill select-apps"));
+  $("open-console").addEventListener("click", () => openConsole());
+  startPrefillButton.addEventListener("click", () => controlPrefill("start"));
+  stopPrefillButton.addEventListener("click", () => {
+    if (window.confirm("Stop the active CacheDeck prefill job?")) controlPrefill("stop");
+  });
+  $("show-status").addEventListener("click", () => runAction("status"));
+  $("notify-button").addEventListener("click", toggleNotifications);
+  $("clear-cache").addEventListener("click", () => {
+    if (window.confirm("Clear SteamPrefill's cache? This cannot be undone.")) runAction("clear-cache");
+  });
+  $("clear-terminal").addEventListener("click", () => {
+    if (terminal) terminal.write("\x1bc");
+  });
+  $("reconnect-terminal").addEventListener("click", () => {
+    if (terminalSocket) terminalSocket.close();
+    terminalReconnectTimer = setTimeout(connectTerminal, 200);
+  });
+  consoleDetails.addEventListener("toggle", () => {
+    if (consoleDetails.open) connectTerminal();
+    else if (terminalSocket) terminalSocket.close();
+  });
+  $("copy-prefill-log").addEventListener("click", () => copyText(prefillOutput.textContent, "Prefill log copied."));
+  $("download-prefill-log").addEventListener("click", () => {
+    const link = document.createElement("a");
+    link.href = "/api/prefill/log.txt?lines=20000";
+    link.download = "cachedeck-prefill.log";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  });
+  $("clear-prefill-view").addEventListener("click", () => {
+    prefillOutput.textContent = "";
+    currentActivity.textContent = "View cleared; the server log is unchanged.";
+  });
+  $("expand-prefill-log").addEventListener("click", () => {
+    const expanded = activityCard.classList.toggle("log-expanded");
+    document.body.classList.toggle("no-scroll", expanded);
+    $("expand-prefill-log").textContent = expanded ? "Exit full screen" : "Full screen";
+  });
+  $("reconnect-prefill-log").addEventListener("click", () => connectPrefillLog(prefillLogSource, true));
+  $("refresh-schedule").addEventListener("click", updateSchedule);
+  $("run-diagnostics").addEventListener("click", runDiagnostics);
+  $("copy-diagnostics").addEventListener("click", () => copyText(diagnosticsText, "Diagnostics copied."));
+  $("refresh-logs").addEventListener("click", refreshLogs);
+  $("copy-target-logs").addEventListener("click", () => copyText($("logs").textContent, "Target logs copied."));
+  $("target-logs-details").addEventListener("toggle", () => {
+    if ($("target-logs-details").open && !targetLogsLoaded) refreshLogs();
   });
 
-  connectTerminal();
+  updateNotificationButton();
   updateHealth();
-  refreshLogs();
-
+  updatePrefill();
+  updateSchedule();
+  updateHistory();
+  window.setInterval(updateElapsed, 1000);
+  window.setInterval(updatePrefill, 5000);
   window.setInterval(updateHealth, 15000);
-  window.setInterval(refreshLogs, 30000);
+  window.setInterval(updateSchedule, 60000);
+  window.setInterval(updateHistory, 60000);
 </script>
 </body>
 </html>

@@ -23,6 +23,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Resolve application version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(tr -d '[:space:]' < VERSION)"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -38,8 +49,9 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=CacheDeck
-            org.opencontainers.image.description=Browser UI for SteamPrefill and LANCache
+            org.opencontainers.image.description=Persistent browser UI for SteamPrefill and LANCache
             org.opencontainers.image.vendor=Danny
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -57,5 +69,7 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
