@@ -1,0 +1,22 @@
+# JetBrains
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Environment and local data
+.env
+.env.*
+!.env.example
+config/
+*.log
+
+# Operating systems
+.DS_Store
+Thumbs.db

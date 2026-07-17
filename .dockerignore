@@ -1,0 +1,16 @@
+.git
+.github
+.idea
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+README.md
+CHANGELOG.md
+SECURITY.md
+templates
+ca_profile.xml
+icon.svg

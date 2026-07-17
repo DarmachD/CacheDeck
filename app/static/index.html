@@ -3,105 +3,716 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>LANCache Prefill UI</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <meta name="theme-color" content="#0a0f19">
+  <title>CacheDeck</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
   <style>
-    :root { color-scheme: dark; --bg:#0b1020; --panel:#121a2d; --muted:#93a4bf; --accent:#6ea8fe; }
-    * { box-sizing:border-box }
-    body { margin:0; font-family:Inter,system-ui,sans-serif; background:var(--bg); color:#edf3ff }
-    main { max-width:1200px; margin:auto; padding:24px }
-    header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:18px }
-    h1 { margin:0; font-size:1.5rem }
-    .status { padding:8px 12px; border-radius:999px; background:#26324c }
-    .ok { background:#173d2c; color:#9bf0bd }
-    .bad { background:#4a2028; color:#ffb2bd }
-    .panel { background:var(--panel); border:1px solid #26324c; border-radius:14px; padding:16px; margin-bottom:16px }
-    .buttons { display:flex; flex-wrap:wrap; gap:10px }
-    button { border:0; border-radius:10px; padding:11px 14px; background:#263653; color:white; cursor:pointer; font-weight:650 }
-    button.primary { background:var(--accent); color:#07101f }
-    button:hover { filter:brightness(1.1) }
-    #terminal { height:620px; width:100%; }
-    p { color:var(--muted); line-height:1.5 }
-    code { background:#0a1120; padding:2px 6px; border-radius:6px }
-    #output { white-space:pre-wrap; color:#d5e1f7; max-height:220px; overflow:auto }
+    :root {
+      color-scheme: dark;
+      --background: #080c14;
+      --background-soft: #0d1420;
+      --panel: rgba(17, 24, 39, .94);
+      --panel-soft: #151f30;
+      --border: #28364c;
+      --border-soft: #202c3f;
+      --text: #edf4ff;
+      --muted: #96a7be;
+      --accent: #f28c28;
+      --accent-hover: #ffa23f;
+      --success: #52d88d;
+      --danger: #ff7180;
+      --warning: #f5c451;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(circle at 15% -10%, #21334e 0, transparent 35%),
+        var(--background);
+      color: var(--text);
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      min-height: 42px;
+      border: 1px solid #354761;
+      border-radius: 10px;
+      padding: 9px 13px;
+      background: #202d42;
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+      transition:
+        background .15s ease,
+        border-color .15s ease,
+        transform .15s ease;
+    }
+
+    button:hover {
+      border-color: #526783;
+      background: #293950;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .55;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #211205;
+    }
+
+    button.primary:hover {
+      border-color: var(--accent-hover);
+      background: var(--accent-hover);
+    }
+
+    button.danger {
+      border-color: #763c47;
+      background: #3e222a;
+      color: #ffc0c7;
+    }
+
+    main {
+      width: min(1420px, 100%);
+      margin: 0 auto;
+      padding: 22px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-icon {
+      display: grid;
+      width: 54px;
+      height: 54px;
+      flex: 0 0 54px;
+      place-items: center;
+      border: 1px solid #ffae58;
+      border-radius: 14px;
+      background: var(--accent);
+      color: #1c1106;
+      box-shadow: 0 12px 35px rgba(0, 0, 0, .35);
+    }
+
+    .brand-icon svg {
+      width: 31px;
+      height: 31px;
+    }
+
+    h1,
+    h2,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 4px;
+      font-size: clamp(1.45rem, 3vw, 1.9rem);
+      line-height: 1.1;
+    }
+
+    h2 {
+      margin-bottom: 13px;
+      font-size: 1rem;
+    }
+
+    .subtitle,
+    .muted {
+      color: var(--muted);
+    }
+
+    .subtitle {
+      margin: 0;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: var(--panel-soft);
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--warning);
+    }
+
+    .status-pill.online {
+      border-color: #2d6849;
+      color: #a8efc5;
+    }
+
+    .status-pill.online .status-dot {
+      background: var(--success);
+    }
+
+    .status-pill.offline {
+      border-color: #71404a;
+      color: #ffc1c8;
+    }
+
+    .status-pill.offline .status-dot {
+      background: var(--danger);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 350px;
+      gap: 16px;
+    }
+
+    .card {
+      margin-bottom: 16px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      background: var(--panel);
+      box-shadow: 0 16px 45px rgba(0, 0, 0, .23);
+    }
+
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+    }
+
+    .terminal-shell {
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+      border-radius: 12px;
+      background: #080d15;
+    }
+
+    #terminal {
+      height: 650px;
+      padding: 8px;
+    }
+
+    .stats {
+      margin: 0;
+    }
+
+    .stat {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 10px 0;
+    }
+
+    .stat:first-child {
+      padding-top: 0;
+    }
+
+    .stat:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .stat dt {
+      color: var(--muted);
+    }
+
+    .stat dd {
+      max-width: 205px;
+      margin: 0;
+      overflow-wrap: anywhere;
+      text-align: right;
+      font-weight: 700;
+    }
+
+    pre {
+      max-height: 300px;
+      margin: 0;
+      overflow: auto;
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      padding: 11px;
+      background: #090e17;
+      color: #d7e2f2;
+      font-family:
+        "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      font-size: .82rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    #action-output[hidden] {
+      display: none;
+    }
+
+    .help {
+      color: var(--muted);
+      font-size: .93rem;
+      line-height: 1.55;
+    }
+
+    .help p:last-child {
+      margin-bottom: 0;
+    }
+
+    .help strong {
+      color: var(--text);
+    }
+
+    .connection {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: .88rem;
+    }
+
+    .connection::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--danger);
+      content: "";
+    }
+
+    .connection.connected::before {
+      background: var(--success);
+    }
+
+    .card-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 13px;
+    }
+
+    .card-heading h2 {
+      margin: 0;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      #terminal {
+        height: 540px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      main {
+        padding: 14px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .button-row button {
+        flex: 1 1 calc(50% - 9px);
+      }
+
+      #terminal {
+        height: 480px;
+      }
+    }
   </style>
 </head>
 <body>
 <main>
-  <header>
-    <div>
-      <h1>LANCache Prefill UI</h1>
-      <p>Browser controls and terminal for SteamPrefill.</p>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none">
+          <path d="M18.4 2.8 7.7 17.7h7.6L13 29.2l11.7-16.6h-7.6z"
+                fill="currentColor"/>
+        </svg>
+      </div>
+      <div>
+        <h1>CacheDeck</h1>
+        <p class="subtitle">Browser controls for SteamPrefill and LANCache</p>
+      </div>
     </div>
-    <div id="status" class="status">Checking…</div>
+
+    <div id="status-pill" class="status-pill" aria-live="polite">
+      <span class="status-dot"></span>
+      <span id="status-text">Checking SteamPrefill…</span>
+    </div>
   </header>
 
-  <section class="panel">
-    <div class="buttons">
-      <button class="primary" onclick="sendCmd('./SteamPrefill select-apps')">Select games</button>
-      <button class="primary" onclick="sendCmd('./SteamPrefill prefill')">Start prefill</button>
-      <button onclick="runAction('status')">Status</button>
-      <button onclick="runAction('clear-cache')">Clear Steam cache</button>
-      <button onclick="sendCmd('clear')">Clear terminal</button>
-      <button onclick="reconnect()">Reconnect terminal</button>
-    </div>
-    <p>The game picker opens inside the terminal below. Search, tick games and confirm using SteamPrefill’s normal interactive controls.</p>
-    <pre id="output"></pre>
-  </section>
+  <div class="layout">
+    <section>
+      <div class="card">
+        <div class="card-heading">
+          <h2>Quick actions</h2>
+          <span id="terminal-status" class="connection">Terminal disconnected</span>
+        </div>
 
-  <section class="panel">
-    <div id="terminal"></div>
-  </section>
+        <div class="button-row">
+          <button id="select-games" class="primary" type="button">
+            Select games
+          </button>
+          <button id="start-prefill" class="primary" type="button">
+            Start prefill
+          </button>
+          <button id="show-status" type="button">
+            SteamPrefill status
+          </button>
+          <button id="refresh-logs" type="button">
+            Refresh logs
+          </button>
+          <button id="clear-terminal" type="button">
+            Clear terminal
+          </button>
+          <button id="reconnect-terminal" type="button">
+            Reconnect
+          </button>
+          <button id="clear-cache" class="danger" type="button">
+            Clear Steam cache
+          </button>
+        </div>
+
+        <pre id="action-output" hidden aria-live="polite"></pre>
+      </div>
+
+      <div class="card">
+        <div class="card-heading">
+          <h2>Interactive console</h2>
+          <span class="muted">SteamPrefill runs inside the target container</span>
+        </div>
+        <div class="terminal-shell">
+          <div id="terminal" aria-label="SteamPrefill terminal"></div>
+        </div>
+      </div>
+    </section>
+
+    <aside>
+      <div class="card">
+        <h2>Connection</h2>
+        <dl class="stats">
+          <div class="stat">
+            <dt>Target container</dt>
+            <dd id="target-container">—</dd>
+          </div>
+          <div class="stat">
+            <dt>Container state</dt>
+            <dd id="target-state">—</dd>
+          </div>
+          <div class="stat">
+            <dt>SteamPrefill path</dt>
+            <dd id="prefill-dir">—</dd>
+          </div>
+          <div class="stat">
+            <dt>Container user</dt>
+            <dd id="prefill-user">—</dd>
+          </div>
+          <div class="stat">
+            <dt>CacheDeck version</dt>
+            <dd id="app-version">—</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h2>How to use it</h2>
+        <div class="help">
+          <p>
+            <strong>Select games</strong> opens SteamPrefill's normal searchable
+            selector in the console.
+          </p>
+          <p>
+            <strong>Start prefill</strong> downloads or updates your saved
+            selection through the existing SteamPrefill container.
+          </p>
+          <p>
+            Keep CacheDeck LAN-only. Mounting the Docker socket gives this
+            container powerful control over Docker.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-heading">
+          <h2>Recent SteamPrefill logs</h2>
+          <span class="muted">Auto-refreshes</span>
+        </div>
+        <pre id="logs" aria-live="polite">Loading…</pre>
+      </div>
+    </aside>
+  </div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
 <script>
-let term, fit, socket;
+  "use strict";
 
-function connectTerminal() {
-  if (!term) {
-    term = new Terminal({cursorBlink:true, convertEol:true, fontSize:14, scrollback:10000});
-    fit = new FitAddon.FitAddon();
-    term.loadAddon(fit);
-    term.open(document.getElementById('terminal'));
-    fit.fit();
-    term.onData(data => socket?.readyState === WebSocket.OPEN && socket.send(data));
-    window.addEventListener('resize', () => { fit.fit(); resize(); });
+  let terminal;
+  let fitAddon;
+  let socket;
+  let reconnectTimer;
+
+  const statusPill = document.getElementById("status-pill");
+  const statusText = document.getElementById("status-text");
+  const terminalStatus = document.getElementById("terminal-status");
+  const actionOutput = document.getElementById("action-output");
+  const logsOutput = document.getElementById("logs");
+
+  function setTerminalStatus(connected) {
+    terminalStatus.classList.toggle("connected", connected);
+    terminalStatus.textContent = connected
+      ? "Terminal connected"
+      : "Terminal disconnected";
   }
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  socket = new WebSocket(`${proto}://${location.host}/ws/terminal`);
-  socket.binaryType = 'arraybuffer';
-  socket.onopen = () => { term.writeln('\r\n\x1b[32mConnected to SteamPrefill.\x1b[0m'); resize(); };
-  socket.onmessage = e => {
-    if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data));
-    else term.write(e.data);
-  };
-  socket.onclose = () => term.writeln('\r\n\x1b[31mTerminal disconnected.\x1b[0m');
-}
-function resize() {
-  if (socket?.readyState === WebSocket.OPEN) socket.send(`__RESIZE__:${term.cols}:${term.rows}`);
-}
-function reconnect() { try { socket?.close(); } catch {} connectTerminal(); }
-function sendCmd(cmd) {
-  if (socket?.readyState !== WebSocket.OPEN) return alert('Terminal is not connected.');
-  socket.send(cmd + '\r');
-  term.focus();
-}
-async function health() {
-  const r = await fetch('/api/health'); const d = await r.json();
-  const el = document.getElementById('status');
-  el.textContent = d.running ? `${d.target} running` : `${d.target} unavailable`;
-  el.className = `status ${d.running ? 'ok' : 'bad'}`;
-}
-async function runAction(action) {
-  const out = document.getElementById('output');
-  out.textContent = 'Running…';
-  const r = await fetch('/api/action', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({action})});
-  const d = await r.json();
-  out.textContent = d.detail || [d.stdout, d.stderr].filter(Boolean).join('\n') || JSON.stringify(d,null,2);
-}
-connectTerminal(); health(); setInterval(health, 15000);
+
+  function createTerminal() {
+    terminal = new Terminal({
+      convertEol: true,
+      cursorBlink: true,
+      fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
+      fontSize: 14,
+      scrollback: 20000,
+      theme: {
+        background: "#080d15",
+        foreground: "#edf4ff",
+        cursor: "#f28c28",
+        selectionBackground: "#3d526e"
+      }
+    });
+
+    fitAddon = new FitAddon.FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(document.getElementById("terminal"));
+    fitAddon.fit();
+
+    terminal.onData((data) => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(data);
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      fitAddon.fit();
+      sendTerminalSize();
+    });
+  }
+
+  function sendTerminalSize() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    socket.send(`__RESIZE__:${terminal.cols}:${terminal.rows}`);
+  }
+
+  function connectTerminal() {
+    clearTimeout(reconnectTimer);
+
+    if (!terminal) {
+      createTerminal();
+    }
+
+    if (socket &&
+        (socket.readyState === WebSocket.OPEN ||
+         socket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    socket = new WebSocket(`${protocol}://${location.host}/ws/terminal`);
+    socket.binaryType = "arraybuffer";
+
+    socket.addEventListener("open", () => {
+      setTerminalStatus(true);
+      terminal.writeln("\r\n\x1b[32mConnected to SteamPrefill.\x1b[0m");
+      fitAddon.fit();
+      sendTerminalSize();
+      terminal.focus();
+    });
+
+    socket.addEventListener("message", (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        terminal.write(new Uint8Array(event.data));
+      } else {
+        terminal.write(event.data);
+      }
+    });
+
+    socket.addEventListener("close", () => {
+      setTerminalStatus(false);
+      terminal.writeln("\r\n\x1b[31mTerminal disconnected.\x1b[0m");
+    });
+
+    socket.addEventListener("error", () => {
+      setTerminalStatus(false);
+    });
+  }
+
+  function sendCommand(command) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      actionOutput.hidden = false;
+      actionOutput.textContent =
+        "The terminal is disconnected. Press Reconnect and try again.";
+      return;
+    }
+
+    socket.send(`${command}\r`);
+    terminal.focus();
+  }
+
+  async function updateHealth() {
+    try {
+      const response = await fetch("/api/health", { cache: "no-store" });
+      const data = await response.json();
+
+      document.getElementById("target-container").textContent = data.target;
+      document.getElementById("target-state").textContent = data.status;
+      document.getElementById("prefill-dir").textContent = data.prefill_dir;
+      document.getElementById("prefill-user").textContent =
+        data.prefill_user || "Container default";
+      document.getElementById("app-version").textContent = data.version;
+
+      statusPill.classList.toggle("online", data.running);
+      statusPill.classList.toggle("offline", !data.running);
+      statusText.textContent = data.running
+        ? `${data.target} online`
+        : `${data.target}: ${data.status}`;
+    } catch (error) {
+      statusPill.classList.remove("online");
+      statusPill.classList.add("offline");
+      statusText.textContent = "CacheDeck API unavailable";
+    }
+  }
+
+  async function runAction(action) {
+    actionOutput.hidden = false;
+    actionOutput.textContent = "Running…";
+
+    try {
+      const response = await fetch("/api/action", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        actionOutput.textContent = data.detail || "The action failed.";
+        return;
+      }
+
+      actionOutput.textContent =
+        [data.stdout, data.stderr].filter(Boolean).join("\n") ||
+        (data.ok ? "Completed successfully." : `Exited with code ${data.code}.`);
+    } catch (error) {
+      actionOutput.textContent = `Request failed: ${error.message}`;
+    }
+  }
+
+  async function refreshLogs() {
+    try {
+      const response = await fetch("/api/logs?lines=150", {
+        cache: "no-store"
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        logsOutput.textContent = data.detail || "Unable to read logs.";
+        return;
+      }
+
+      logsOutput.textContent =
+        [data.stdout, data.stderr].filter(Boolean).join("\n") ||
+        "No container logs are available yet.";
+      logsOutput.scrollTop = logsOutput.scrollHeight;
+    } catch (error) {
+      logsOutput.textContent = `Unable to read logs: ${error.message}`;
+    }
+  }
+
+  document.getElementById("select-games").addEventListener("click", () => {
+    sendCommand("./SteamPrefill select-apps");
+  });
+
+  document.getElementById("start-prefill").addEventListener("click", () => {
+    sendCommand("./SteamPrefill prefill");
+  });
+
+  document.getElementById("show-status").addEventListener("click", () => {
+    runAction("status");
+  });
+
+  document.getElementById("refresh-logs").addEventListener("click", () => {
+    refreshLogs();
+  });
+
+  document.getElementById("clear-terminal").addEventListener("click", () => {
+    terminal.clear();
+    terminal.focus();
+  });
+
+  document.getElementById("reconnect-terminal").addEventListener("click", () => {
+    if (socket) {
+      socket.close();
+    }
+    reconnectTimer = setTimeout(connectTerminal, 250);
+  });
+
+  document.getElementById("clear-cache").addEventListener("click", () => {
+    const confirmed = window.confirm(
+      "Clear SteamPrefill's cache? This cannot be undone."
+    );
+    if (confirmed) {
+      runAction("clear-cache");
+    }
+  });
+
+  connectTerminal();
+  updateHealth();
+  refreshLogs();
+
+  window.setInterval(updateHealth, 15000);
+  window.setInterval(refreshLogs, 30000);
 </script>
 </body>
 </html>

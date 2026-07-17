@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import os
 import pty
 import select
@@ -6,133 +9,358 @@ import signal
 import struct
 import subprocess
 import termios
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Final
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="LANCache Prefill UI")
+APP_NAME: Final = "CacheDeck"
+APP_VERSION: Final = os.getenv("CACHEDECK_VERSION", "0.3.0")
 
-TARGET_CONTAINER = os.getenv("TARGET_CONTAINER", "LANCache-Prefill")
-PREFILL_DIR = os.getenv("PREFILL_DIR", "/lancacheprefill/SteamPrefill")
-PREFILL_USER = os.getenv("PREFILL_USER", "prefill")
-PORT = int(os.getenv("PORT", "8080"))
+TARGET_CONTAINER: Final = os.getenv("TARGET_CONTAINER", "LANCache-Prefill")
+PREFILL_DIR: Final = os.getenv(
+    "PREFILL_DIR",
+    "/lancacheprefill/SteamPrefill",
+)
+PREFILL_USER: Final = os.getenv("PREFILL_USER", "prefill")
 
-ALLOWED_ACTIONS = {
-    "prefill": "./SteamPrefill prefill",
-    "select": "./SteamPrefill select-apps",
+STATIC_DIR: Final = Path(__file__).resolve().parent / "static"
+
+ALLOWED_ACTIONS: Final[dict[str, str]] = {
     "status": "./SteamPrefill status",
     "clear-cache": "./SteamPrefill clear-cache -y",
 }
 
+app = FastAPI(
+    title=APP_NAME,
+    version=APP_VERSION,
+    docs_url="/api/docs",
+    redoc_url=None,
+)
+
+
 class ActionRequest(BaseModel):
     action: str
 
-def docker_exec_command(command: str, interactive: bool = False) -> list[str]:
+
+class CommandResult(BaseModel):
+    ok: bool
+    code: int
+    stdout: str
+    stderr: str
+
+
+def docker_exec_command(command: str, *, interactive: bool = False) -> list[str]:
+    """Build a docker exec command for the configured SteamPrefill container."""
     args = ["docker", "exec"]
+
     if interactive:
-        args += ["-it"]
-    args += [
-        "--user", PREFILL_USER,
-        "--workdir", PREFILL_DIR,
-        TARGET_CONTAINER,
-        "bash", "-lc", command,
-    ]
+        args.extend(["-i", "-t"])
+
+    if PREFILL_USER:
+        args.extend(["--user", PREFILL_USER])
+
+    if PREFILL_DIR:
+        args.extend(["--workdir", PREFILL_DIR])
+
+    args.extend(
+        [
+            TARGET_CONTAINER,
+            "bash",
+            "-lc",
+            command,
+        ]
+    )
     return args
 
-@app.get("/")
-async def index():
-    return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+def run_process(
+    args: list[str],
+    *,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+async def run_process_async(
+    args: list[str],
+    *,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    return await asyncio.to_thread(run_process, args, timeout=timeout)
+
+
+async def inspect_target() -> dict[str, str | bool]:
+    try:
+        result = await run_process_async(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                "{{.State.Running}}|{{.State.Status}}",
+                TARGET_CONTAINER,
+            ],
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "running": False,
+            "status": "timeout",
+            "detail": "Docker did not answer within 10 seconds.",
+        }
+    except OSError as exc:
+        return {
+            "running": False,
+            "status": "error",
+            "detail": str(exc),
+        }
+
+    if result.returncode != 0:
+        return {
+            "running": False,
+            "status": "not found",
+            "detail": result.stderr.strip() or "Target container was not found.",
+        }
+
+    raw = result.stdout.strip()
+    running_text, _, status = raw.partition("|")
+
+    return {
+        "running": running_text == "true",
+        "status": status or "unknown",
+        "detail": "",
+    }
+
+
+@app.get("/", include_in_schema=False)
+async def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "favicon.svg",
+        media_type="image/svg+xml",
+    )
+
 
 @app.get("/api/health")
-async def health():
-    check = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", TARGET_CONTAINER],
-        capture_output=True, text=True, timeout=10
-    )
+async def health() -> dict[str, object]:
+    target = await inspect_target()
     return {
+        "app": APP_NAME,
+        "version": APP_VERSION,
         "target": TARGET_CONTAINER,
-        "running": check.returncode == 0 and check.stdout.strip() == "true",
-        "detail": check.stderr.strip() if check.returncode else "",
+        "prefill_dir": PREFILL_DIR,
+        "prefill_user": PREFILL_USER,
+        "running": target["running"],
+        "status": target["status"],
+        "detail": target["detail"],
+        "time": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/api/logs")
+async def logs(
+    lines: int = Query(default=150, ge=10, le=2000),
+) -> CommandResult:
+    try:
+        result = await run_process_async(
+            [
+                "docker",
+                "logs",
+                "--tail",
+                str(lines),
+                TARGET_CONTAINER,
+            ],
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Timed out while reading the target container logs.",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to run Docker: {exc}",
+        ) from exc
+
+    return CommandResult(
+        ok=result.returncode == 0,
+        code=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
 
 @app.post("/api/action")
-async def action(req: ActionRequest):
-    if req.action not in ALLOWED_ACTIONS:
-        raise HTTPException(400, "Unsupported action")
-    # Non-interactive actions only. Interactive selection/prefill runs in terminal.
-    if req.action in {"select", "prefill"}:
-        raise HTTPException(400, "Use the browser terminal for this action")
-    proc = subprocess.run(
-        docker_exec_command(ALLOWED_ACTIONS[req.action]),
-        capture_output=True, text=True, timeout=120
+async def action(request: ActionRequest) -> CommandResult:
+    command = ALLOWED_ACTIONS.get(request.action)
+
+    if command is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported action.",
+        )
+
+    try:
+        result = await run_process_async(
+            docker_exec_command(command),
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="SteamPrefill did not finish within five minutes.",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to run Docker: {exc}",
+        ) from exc
+
+    return CommandResult(
+        ok=result.returncode == 0,
+        code=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
     )
-    return {
-        "ok": proc.returncode == 0,
-        "code": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-    }
+
 
 @app.websocket("/ws/terminal")
-async def terminal(ws: WebSocket):
-    await ws.accept()
-    master_fd, slave_fd = pty.openpty()
-    env = os.environ.copy()
-    env["TERM"] = "xterm-256color"
+async def terminal(websocket: WebSocket) -> None:
+    await websocket.accept()
 
-    command = docker_exec_command("exec bash", interactive=True)
-    proc = subprocess.Popen(
-        command,
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        env=env,
-        close_fds=True,
-        start_new_session=True,
+    target = await inspect_target()
+    if not target["running"]:
+        await websocket.send_text(
+            "\r\n\x1b[31mCacheDeck could not connect to "
+            f"{TARGET_CONTAINER}: {target['status']}.\x1b[0m\r\n"
+        )
+        await websocket.close(code=1011)
+        return
+
+    master_fd, slave_fd = pty.openpty()
+
+    # Give applications a sensible size before the browser sends its first resize.
+    import fcntl
+
+    fcntl.ioctl(
+        master_fd,
+        termios.TIOCSWINSZ,
+        struct.pack("HHHH", 40, 120, 0, 0),
     )
+
+    environment = os.environ.copy()
+    environment["TERM"] = "xterm-256color"
+
+    try:
+        process = subprocess.Popen(
+            docker_exec_command("exec bash", interactive=True),
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=environment,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        os.close(master_fd)
+        os.close(slave_fd)
+        await websocket.send_text(
+            f"\r\n\x1b[31mUnable to start Docker terminal: {exc}\x1b[0m\r\n"
+        )
+        await websocket.close(code=1011)
+        return
+
     os.close(slave_fd)
 
-    async def pump_output():
+    async def pump_output() -> None:
         loop = asyncio.get_running_loop()
-        while proc.poll() is None:
+
+        while process.poll() is None:
             ready, _, _ = await loop.run_in_executor(
-                None, lambda: select.select([master_fd], [], [], 0.2)
+                None,
+                lambda: select.select([master_fd], [], [], 0.2),
             )
-            if ready:
-                try:
-                    data = os.read(master_fd, 8192)
-                    if not data:
-                        break
-                    await ws.send_bytes(data)
-                except OSError:
-                    break
+            if not ready:
+                continue
+
+            try:
+                data = os.read(master_fd, 8192)
+            except OSError:
+                break
+
+            if not data:
+                break
+
+            try:
+                await websocket.send_bytes(data)
+            except RuntimeError:
+                break
 
     output_task = asyncio.create_task(pump_output())
+
     try:
         while True:
-            message = await ws.receive()
-            if "text" in message and message["text"] is not None:
-                text = message["text"]
+            message = await websocket.receive()
+
+            text = message.get("text")
+            if text is not None:
                 if text.startswith("__RESIZE__:"):
                     try:
-                        cols, rows = map(int, text.split(":")[1:])
-                        winsize = struct.pack("HHHH", rows, cols, 0, 0)
-                        import fcntl
-                        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
-                    except Exception:
+                        _, columns, rows = text.split(":", 2)
+                        fcntl.ioctl(
+                            master_fd,
+                            termios.TIOCSWINSZ,
+                            struct.pack(
+                                "HHHH",
+                                int(rows),
+                                int(columns),
+                                0,
+                                0,
+                            ),
+                        )
+                    except (ValueError, OSError):
                         pass
                 else:
-                    os.write(master_fd, text.encode())
-            elif "bytes" in message and message["bytes"] is not None:
-                os.write(master_fd, message["bytes"])
+                    os.write(master_fd, text.encode("utf-8"))
+                continue
+
+            data = message.get("bytes")
+            if data is not None:
+                os.write(master_fd, data)
+
     except WebSocketDisconnect:
         pass
     finally:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.to_thread(process.wait),
+                timeout=3,
+            )
+
+        if process.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+
         output_task.cancel()
-        os.close(master_fd)
+        with contextlib.suppress(asyncio.CancelledError):
+            await output_task
+
+        with contextlib.suppress(OSError):
+            os.close(master_fd)

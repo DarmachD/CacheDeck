@@ -1,7 +1,9 @@
 services:
-  lancache-prefill-ui:
-    build: .
-    container_name: LANCache-Prefill-UI
+  cachedeck:
+    build:
+      context: .
+    image: ghcr.io/darmachd/cachedeck:latest
+    container_name: CacheDeck
     restart: unless-stopped
     ports:
       - "8088:8080"
@@ -9,6 +11,6 @@ services:
       TARGET_CONTAINER: LANCache-Prefill
       PREFILL_DIR: /lancacheprefill/SteamPrefill
       PREFILL_USER: prefill
-      PORT: "8080"
+      CACHEDECK_VERSION: "0.3.0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
