@@ -9,13 +9,13 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/DarmachD/CacheDeck/issues</Support>
   <Project>https://github.com/DarmachD/CacheDeck</Project>
-  <Overview>Persistent browser controls, reconnectable live progress, scheduling information and diagnostics for an existing SteamPrefill container.</Overview>
+  <Overview>Persistent SteamPrefill dashboard with a visual game library, update queue, live progress, scheduling information and diagnostics.</Overview>
   <Description>
     CacheDeck provides a browser interface for SteamPrefill and LANCache.
-    Select games, launch detached prefill jobs, reconnect to live output, review
-    run history, inspect the configured schedule and collect diagnostics without
-    opening an Unraid terminal. Prefills continue after the browser or controlling
-    computer disconnects.
+    Select games, browse a visual Steam library, queue one-click game updates,
+    launch detached prefill jobs, reconnect to live output, review run history,
+    inspect the configured schedule and collect diagnostics without opening an
+    Unraid terminal. Prefills continue after the browser disconnects.
   </Description>
   <Category>Tools:Utilities Network:Other</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
@@ -53,7 +53,7 @@
     Target="/config"
     Default="/mnt/user/appdata/cachedeck"
     Mode="rw"
-    Description="Persistent CacheDeck run history and application state."
+    Description="Persistent CacheDeck history, game library metadata and per-game update queue."
     Type="Path"
     Display="always"
     Required="true"

@@ -12,6 +12,9 @@ console without replacing SteamPrefill's own authentication or game selector.
 - Reconnectable live output using a WebSocket stream rather than repeated log polling
 - Detection of jobs started by SteamPrefill's scheduler or another client
 - Pause and resume controls for active CacheDeck or scheduler-started prefills
+- Games tab with Steam artwork, selected/downloaded/queued state and live per-game progress
+- Persistent per-game update queue with one-click **Check & update** actions
+- Cached Steam metadata and store links for selected games
 - Persistent run history stored in CacheDeck's `/config` directory
 - Optional one-shot automatic resume after a managed job is interrupted
 - Configured cron schedule, timezone and next expected run display
@@ -83,6 +86,36 @@ When a target-container log says `SteamPrefill already running, aborting schedul
 the existing prefill has not been stopped. The scheduler detected the active job
 and skipped only its duplicate launch.
 
+## Games view
+
+The **Games** tab builds its catalogue from SteamPrefill's own
+`select-apps status --no-ansi` output. It displays selected games as a list with
+Steam artwork, compressed download size, current progress, queue position and
+the last known prefill state. Steam app IDs and artwork are resolved in the
+background and cached in `/config/library.json`.
+
+A per-game **Check & update** action adds that Steam app to CacheDeck's persistent
+queue. When SteamPrefill is free, CacheDeck runs a targeted prefill for that app.
+If the app is already current the job finishes quickly; if Steam has a newer
+build, SteamPrefill downloads it into LANCache automatically. SteamPrefill does
+not expose a separate dry-run update check, so the check and one-click update are
+intentionally one operation. **Check all & update** starts the normal selected-app
+prefill. CacheDeck-managed runs add `--verbose --no-ansi` so up-to-date games and
+plain-text progress can be recorded consistently.
+
+SteamPrefill streams content through LANCache and does not install a normal game
+copy on the CacheDeck host. Therefore **Downloaded** in the Games view means the
+selected build was successfully prefilled into LANCache at the last known check;
+it is not an installed Steam library folder. LANCache eviction or manual cache
+clearing can remove objects later, which SteamPrefill cannot enumerate by game.
+
+The queue is stored in `/config/game-queue.json`, so queued per-game checks
+survive a CacheDeck restart. Only one SteamPrefill process is launched at once.
+A successful full CacheDeck run marks every selected game as checked and up to
+date. CacheDeck can also recognise the normal successful summary from scheduled
+or externally started full prefills; when an external run has no readable success
+summary, it leaves the last known per-game state untouched rather than guessing.
+
 ## Schedule detection
 
 CacheDeck looks for the following target-container environment variables:
@@ -122,7 +155,7 @@ templates/cachedeck.xml
 Before public submission:
 
 1. Push the repository to GitHub.
-2. Tag the release, for example `v0.5.1`, if you want matching semver image tags.
+2. Tag the release, for example `v0.6.0`, if you want matching semver image tags.
 3. Confirm the GitHub Actions build succeeds.
 4. Make the `ghcr.io/darmachd/cachedeck` package public.
 5. Test a clean install from the Unraid template.
@@ -132,7 +165,7 @@ Before public submission:
 ## Versioning
 
 `VERSION` is the single release-version source for ordinary builds. A Git tag
-such as `v0.5.1` overrides it during the tagged GitHub Actions build and also
+such as `v0.6.0` overrides it during the tagged GitHub Actions build and also
 creates semver container tags.
 
 ## Development
@@ -151,8 +184,15 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+Run the parser and persistent-state tests with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 The application needs the Docker socket and a Linux PTY for its terminal, so the
-complete terminal workflow is best tested inside Docker or directly on Unraid.
+complete terminal and targeted-prefill workflow is best tested inside Docker or
+directly on Unraid.
 
 ## Security
 

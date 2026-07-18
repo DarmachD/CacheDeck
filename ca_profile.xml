@@ -1,8 +1,9 @@
 <?xml version="1.0"?>
 <CommunityApplications>
   <Profile>
-    CacheDeck is maintained by Danny. It provides browser controls and an
-    interactive console for SteamPrefill and LANCache. Support and source code
+    CacheDeck is maintained by Danny. It provides a visual game library,
+    persistent update queue, browser controls and an interactive console for
+    SteamPrefill and LANCache. Support and source code
     are available through the CacheDeck GitHub repository.
   </Profile>
   <Icon>https://raw.githubusercontent.com/DarmachD/CacheDeck/main/icon.svg</Icon>

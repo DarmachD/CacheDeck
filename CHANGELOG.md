@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+- Added Dashboard and Games view tabs
+- Added a Steam game list with artwork, names, compressed sizes and status badges
+- Added live per-game progress bars using SteamPrefill output
+- Added selected, queued, checking, downloading, downloaded, update-available and failed states
+- Added a persistent per-game Check & update queue
+- Added one-click per-game targeted prefills and a full-library Check all & update action
+- Added search, status filters and name/size/status sorting
+- Added cached Steam app-ID, artwork and store-link metadata under `/config`
+- Corrected the SteamPrefill status action to use `select-apps status --no-ansi`
+- Added unit tests for status parsing, live progress and persistent queue/library state
+- Managed checks now add `--verbose --no-ansi` so CacheDeck can track up-to-date games reliably
+- Added recognition of successful scheduler/external run summaries
+- Uses Steam app IDs for artwork and store links immediately when SteamPrefill provides them
+
 ## 0.5.1
 
 - Added Pause/Resume control for active SteamPrefill jobs, including scheduler-started jobs

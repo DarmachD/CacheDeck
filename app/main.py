@@ -23,6 +23,19 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
+from app.library import (
+    GameQueueItem,
+    GameRecord,
+    LibraryResponse,
+    LibraryStore,
+    QueueStore,
+    build_library_response,
+    parse_progress_snapshot,
+    parse_selected_apps_status,
+    output_indicates_successful_prefill,
+    resolve_steam_metadata,
+)
+
 APP_NAME: Final = "CacheDeck"
 
 
@@ -49,9 +62,11 @@ AUTO_RESUME_INTERRUPTED: Final = os.getenv(
 
 STATIC_DIR: Final = Path(__file__).resolve().parent / "static"
 HISTORY_FILE: Final = CONFIG_DIR / "history.json"
+LIBRARY_FILE: Final = CONFIG_DIR / "library.json"
+QUEUE_FILE: Final = CONFIG_DIR / "game-queue.json"
 
 ALLOWED_ACTIONS: Final[dict[str, str]] = {
-    "status": "./SteamPrefill status",
+    "status": "./SteamPrefill select-apps status --no-ansi",
     "clear-cache": "./SteamPrefill clear-cache -y",
 }
 
@@ -129,6 +144,9 @@ class HistoryRecord(BaseModel):
     message: str = ""
     resume_of: str | None = None
     auto_resume_attempted: bool = False
+    scope: Literal["full", "single"] = "full"
+    app_id: int | None = None
+    app_name: str | None = None
 
 
 class ScheduleInfo(BaseModel):
@@ -227,6 +245,8 @@ class HistoryStore:
 
 
 history_store = HistoryStore(HISTORY_FILE, HISTORY_LIMIT)
+library_store = LibraryStore(LIBRARY_FILE)
+queue_store = QueueStore(QUEUE_FILE)
 
 
 def utc_now() -> str:
@@ -642,13 +662,16 @@ async def get_prefill_status() -> PrefillStatus:
                 update={
                     "resume_of": previous.resume_of,
                     "auto_resume_attempted": previous.auto_resume_attempted,
+                    "scope": previous.scope,
+                    "app_id": previous.app_id,
+                    "app_name": previous.app_name,
                 }
             )
         history_store.upsert(record)
     return status
 
 
-def build_prefill_wrapper(job_id: str, started_at: str) -> str:
+def build_prefill_wrapper(job_id: str, started_at: str, command: str) -> str:
     state_dir = shlex.quote(PREFILL_STATE_DIR)
     prefill_dir = shlex.quote(PREFILL_DIR)
     return f"""#!/usr/bin/env bash
@@ -687,16 +710,16 @@ exec >> "$log_file" 2>&1
 printf '[%s] CacheDeck job {job_id} started.\\n' {shlex.quote(started_at)}
 cd {prefill_dir} || exit 127
 
-{PREFILL_COMMAND} &
+{command} &
 child_pid="$!"
 wait "$child_pid"
 exit "$?"
 """
 
 
-def build_start_command(job_id: str, started_at: str) -> str:
+def build_start_command(job_id: str, started_at: str, command: str) -> str:
     state_dir = shlex.quote(PREFILL_STATE_DIR)
-    wrapper_script = shlex.quote(build_prefill_wrapper(job_id, started_at))
+    wrapper_script = shlex.quote(build_prefill_wrapper(job_id, started_at, command))
     wrapper_path = shlex.quote(
         str(PurePosixPath(PREFILL_STATE_DIR) / "prefill-wrapper.sh")
     )
@@ -764,12 +787,35 @@ printf 'STARTED\\0%s\\0%s\\0' {shlex.quote(job_id)} "$pid"
 """.strip()
 
 
-async def launch_prefill_job(resume_of: str | None = None) -> PrefillStartResult:
+def managed_prefill_command(app_id: int | None = None) -> str:
+    """Build a machine-readable managed command without overriding user-supplied flags."""
+    command = PREFILL_COMMAND.strip()
+    if app_id is not None:
+        command = f"{command} {app_id}"
+    tokens = set(command.split())
+    if "--verbose" not in tokens:
+        command += " --verbose"
+    if "--no-ansi" not in tokens:
+        command += " --no-ansi"
+    return command
+
+
+async def launch_prefill_job(
+    resume_of: str | None = None,
+    *,
+    app_id: int | None = None,
+    app_name: str | None = None,
+) -> PrefillStartResult:
     current = await get_raw_prefill_status()
     if current.state == "unavailable":
         raise HTTPException(status_code=503, detail=current.message)
     if current.running:
         raise HTTPException(status_code=409, detail="A SteamPrefill job is already running.")
+
+    scope: Literal["full", "single"] = "single" if app_id is not None else "full"
+    if app_id is not None and app_id < 1:
+        raise HTTPException(status_code=400, detail="Invalid Steam app ID.")
+    command = managed_prefill_command(app_id)
 
     job_id = uuid.uuid4().hex
     started_at = utc_now()
@@ -779,13 +825,16 @@ async def launch_prefill_job(resume_of: str | None = None) -> PrefillStartResult
             source="cachedeck",
             state="starting",
             started_at=started_at,
-            message="Starting detached prefill.",
+            message=(f"Checking and updating {app_name or app_id}." if app_id is not None else "Starting detached prefill."),
             resume_of=resume_of,
+            scope=scope,
+            app_id=app_id,
+            app_name=app_name,
         )
     )
 
     try:
-        result = await run_target_command(build_start_command(job_id, started_at), timeout=20)
+        result = await run_target_command(build_start_command(job_id, started_at, command), timeout=20)
     except subprocess.TimeoutExpired as exc:
         history_store.update(job_id, state="failed", finished_at=utc_now(), message=str(exc))
         raise HTTPException(status_code=504, detail="Timed out while starting the prefill job.") from exc
@@ -814,7 +863,7 @@ async def launch_prefill_job(resume_of: str | None = None) -> PrefillStartResult
     status = await get_prefill_status()
     return PrefillStartResult(
         ok=True,
-        message="Prefill started on the server and will continue after this browser disconnects.",
+        message=(f"{app_name or app_id} was queued for a server-side check and update." if app_id is not None else "Prefill started on the server and will continue after this browser disconnects."),
         status=status,
     )
 
@@ -1056,6 +1105,223 @@ if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\\n'; e
     )
 
 
+async def refresh_selected_library() -> tuple[list[GameRecord], str]:
+    """Refresh CacheDeck's selected-app catalogue from SteamPrefill's own status command."""
+    try:
+        result = await run_target_command(
+            "./SteamPrefill select-apps status --no-ansi",
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="SteamPrefill did not return the selected app list within five minutes.",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=502,
+            detail=result.stderr.strip() or result.stdout.strip() or "SteamPrefill could not list selected apps.",
+        )
+
+    selected = parse_selected_apps_status(result.stdout)
+    if not selected:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "SteamPrefill returned no parseable selected apps. Open Select games, save the list, "
+                "then refresh the Games view."
+            ),
+        )
+    games = library_store.replace_selected(selected, utc_now())
+    start_metadata_refresh()
+    return games, f"Loaded {len(games)} selected Steam apps."
+
+
+async def read_target_container_output(
+    lines: int = 2500,
+    *,
+    since: str | None = None,
+) -> str:
+    args = ["docker", "logs"]
+    if since:
+        args.extend(["--since", since])
+    args.extend(["--tail", str(lines), TARGET_CONTAINER])
+    result = await run_process_async(args, timeout=20)
+    return "\n".join(part for part in (result.stdout, result.stderr) if part)
+
+
+async def read_current_prefill_output(lines: int = 2500) -> str:
+    status = await get_prefill_status()
+    if status.log_source == "cachedeck":
+        log_file = shlex.quote(str(PurePosixPath(PREFILL_STATE_DIR) / "prefill.log"))
+        result = await run_target_command(
+            f"if [ -r {log_file} ]; then tail -n {lines} {log_file}; fi",
+            timeout=20,
+        )
+        return "\n".join(part for part in (result.stdout, result.stderr) if part)
+    if status.log_source == "container":
+        return await read_target_container_output(lines, since=status.started_at)
+    return ""
+
+
+async def metadata_refresh_worker() -> None:
+    if library_store.metadata_refreshing:
+        return
+    library_store.metadata_refreshing = True
+    try:
+        # Resolve a few at a time and persist every hit. Existing IDs are never re-looked-up.
+        for game in library_store.list_games():
+            if game.app_id is not None and game.image_url and game.store_url:
+                continue
+            if game.app_id is not None:
+                library_store.save_metadata(
+                    game.key,
+                    game.app_id,
+                    f"https://cdn.cloudflare.steamstatic.com/steam/apps/{game.app_id}/header.jpg",
+                    f"https://store.steampowered.com/app/{game.app_id}/",
+                )
+                continue
+            result = await asyncio.to_thread(resolve_steam_metadata, game.name)
+            if result is None:
+                continue
+            app_id, image_url, store_url = result
+            library_store.save_metadata(game.key, app_id, image_url, store_url)
+            await asyncio.sleep(0.08)
+    finally:
+        library_store.metadata_refreshing = False
+
+
+def start_metadata_refresh() -> None:
+    if library_store.metadata_refreshing:
+        return
+    asyncio.create_task(metadata_refresh_worker())
+
+
+async def sync_library_activity() -> None:
+    status = await get_prefill_status()
+    latest = history_store.latest()
+    if status.running:
+        try:
+            output = await read_current_prefill_output()
+            snapshot = parse_progress_snapshot(output)
+            full_run = not latest or latest.job_id != status.job_id or latest.scope == "full"
+            library_store.apply_progress(snapshot, full_run=full_run)
+        except Exception:
+            pass
+        return
+
+    if not latest:
+        return
+
+    if latest.source == "external":
+        if latest.state == "finished" and latest.started_at:
+            try:
+                output = await read_target_container_output(5000, since=latest.started_at)
+                library_store.apply_progress(parse_progress_snapshot(output), full_run=True)
+                if output_indicates_successful_prefill(output):
+                    library_store.mark_all_downloaded(
+                        latest.job_id,
+                        latest.finished_at or utc_now(),
+                    )
+            except Exception:
+                pass
+        return
+
+    if latest.state == "completed" and latest.scope == "full":
+        library_store.mark_all_downloaded(latest.job_id, latest.finished_at or utc_now())
+
+    running_item = next((item for item in queue_store.list() if item.state == "running"), None)
+    if not running_item or running_item.job_id != latest.job_id:
+        return
+
+    if latest.state == "completed":
+        finished = latest.finished_at or utc_now()
+        queue_store.update(
+            running_item.queue_id,
+            state="completed",
+            finished_at=finished,
+            message="Steam checked the app and downloaded any available update.",
+        )
+        library_store.update_by_app_id(
+            running_item.app_id,
+            status="downloaded",
+            progress=100.0,
+            queue_position=None,
+            update_available=False,
+            last_checked_at=finished,
+            last_prefilled_at=finished,
+            speed=None,
+            eta=None,
+            message="Downloaded and up to date at the last check.",
+        )
+    elif latest.state in {"failed", "stopped", "interrupted"}:
+        finished = latest.finished_at or utc_now()
+        queue_store.update(
+            running_item.queue_id,
+            state="failed",
+            finished_at=finished,
+            message=latest.message or "The per-game update failed.",
+        )
+        library_store.update_by_app_id(
+            running_item.app_id,
+            status="failed",
+            queue_position=None,
+            speed=None,
+            eta=None,
+            message=latest.message or "The per-game update failed.",
+        )
+
+
+async def game_queue_loop() -> None:
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await sync_library_activity()
+            raw_status = await get_raw_prefill_status()
+            if not raw_status.running:
+                item = queue_store.next_queued()
+                if item is not None:
+                    queue_store.update(
+                        item.queue_id,
+                        state="running",
+                        started_at=utc_now(),
+                        message="Steam is checking this app and will download an update if one exists.",
+                    )
+                    library_store.update_by_app_id(
+                        item.app_id,
+                        status="checking",
+                        progress=0.0,
+                        queue_position=None,
+                        update_available=None,
+                        message="Checking Steam and applying an update if needed.",
+                    )
+                    try:
+                        result = await launch_prefill_job(app_id=item.app_id, app_name=item.app_name)
+                        queue_store.update(
+                            item.queue_id,
+                            job_id=result.status.job_id,
+                            message="Steam is checking this app and will download an update if one exists.",
+                        )
+                    except Exception as exc:
+                        queue_store.update(
+                            item.queue_id,
+                            state="failed",
+                            finished_at=utc_now(),
+                            message=str(exc),
+                        )
+                        library_store.update_by_app_id(
+                            item.app_id,
+                            status="failed",
+                            message=str(exc),
+                        )
+        except Exception:
+            pass
+        await asyncio.sleep(4)
+
+
 async def auto_recovery_loop() -> None:
     await asyncio.sleep(20)
     while True:
@@ -1078,7 +1344,11 @@ async def auto_recovery_loop() -> None:
                         message="CacheDeck is attempting one automatic resume.",
                     )
                     with contextlib.suppress(Exception):
-                        await launch_prefill_job(resume_of=latest.job_id)
+                        await launch_prefill_job(
+                            resume_of=latest.job_id,
+                            app_id=latest.app_id if latest.scope == "single" else None,
+                            app_name=latest.app_name,
+                        )
         except Exception:
             pass
         await asyncio.sleep(30)
@@ -1089,12 +1359,16 @@ async def lifespan(_: FastAPI):
     with contextlib.suppress(OSError):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     recovery_task = asyncio.create_task(auto_recovery_loop())
+    queue_task = asyncio.create_task(game_queue_loop())
     try:
         yield
     finally:
         recovery_task.cancel()
+        queue_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await recovery_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await queue_task
 
 
 app = FastAPI(
@@ -1338,6 +1612,83 @@ async def prefill_log_download(
 @app.get("/api/prefill/history", response_model=list[HistoryRecord])
 async def prefill_history() -> list[HistoryRecord]:
     return history_store.list()
+
+
+@app.get("/api/library", response_model=LibraryResponse)
+async def library(refresh: bool = Query(default=False)) -> LibraryResponse:
+    message = ""
+    if refresh or not library_store.list_games():
+        _, message = await refresh_selected_library()
+    else:
+        start_metadata_refresh()
+    await sync_library_activity()
+    return build_library_response(library_store, queue_store, message=message)
+
+
+@app.post("/api/library/refresh", response_model=LibraryResponse)
+async def refresh_library() -> LibraryResponse:
+    _, message = await refresh_selected_library()
+    await sync_library_activity()
+    return build_library_response(library_store, queue_store, message=message)
+
+
+@app.post("/api/library/metadata", response_model=LibraryResponse)
+async def refresh_library_metadata() -> LibraryResponse:
+    start_metadata_refresh()
+    return build_library_response(
+        library_store,
+        queue_store,
+        message="Steam artwork and app IDs are being resolved in the background.",
+    )
+
+
+@app.post("/api/library/games/{app_id}/update", response_model=LibraryResponse)
+async def queue_game_update(app_id: int) -> LibraryResponse:
+    game = next((item for item in library_store.list_games() if item.app_id == app_id), None)
+    if game is None:
+        raise HTTPException(status_code=404, detail="That Steam app is not in the selected library.")
+    queue_item = queue_store.enqueue(
+        GameQueueItem(
+            queue_id=uuid.uuid4().hex,
+            app_id=app_id,
+            app_name=game.name,
+            requested_at=utc_now(),
+        )
+    )
+    library_store.update_by_app_id(
+        app_id,
+        status="queued" if queue_item.state == "queued" else "checking",
+        progress=0.0,
+        update_available=None,
+        message=(
+            "Queued for a Steam update check. Any available update will be downloaded automatically."
+            if queue_item.state == "queued"
+            else "Steam is already checking this app."
+        ),
+    )
+    return build_library_response(
+        library_store,
+        queue_store,
+        message=f"{game.name} is {queue_item.state}.",
+    )
+
+
+@app.delete("/api/library/queue/{queue_id}", response_model=LibraryResponse)
+async def cancel_game_update(queue_id: str) -> LibraryResponse:
+    item = queue_store.cancel(queue_id)
+    if item is None:
+        raise HTTPException(status_code=409, detail="Only queued updates can be removed.")
+    library_store.update_by_app_id(
+        item.app_id,
+        status="selected",
+        queue_position=None,
+        message="Selected for prefill.",
+    )
+    return build_library_response(
+        library_store,
+        queue_store,
+        message=f"Removed {item.app_name} from the queue.",
+    )
 
 
 @app.get("/api/schedule", response_model=ScheduleInfo)
