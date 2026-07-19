@@ -24,6 +24,8 @@ class PrefillProvider(ABC):
     provider_id: str
     display_name: str
     compatibility_mode: bool = True
+    execution_mode: str = "target_container"
+    requires_docker_socket: bool = True
     capabilities: ProviderCapabilities
 
     @property
@@ -75,5 +77,7 @@ class PrefillProvider(ABC):
             "id": self.provider_id,
             "name": self.display_name,
             "compatibility_mode": self.compatibility_mode,
+            "execution_mode": self.execution_mode,
+            "requires_docker_socket": self.requires_docker_socket,
             "capabilities": self.capabilities.model_dump(),
         }

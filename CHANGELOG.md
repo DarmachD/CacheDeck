@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0
+
+- Added the `embedded-steam` provider and made it the default.
+- Bundled the official SteamPrefill 3.6.0 Linux x64 core inside the CacheDeck image.
+- Removed the requirement for a separate SteamPrefill container in normal operation.
+- Moved Steam execution, detached jobs, live logs and engine state into CacheDeck's persistent `/config/steam-engine` directory.
+- Retained the external `steamprefill` provider as a compatibility option.
+- Added automatic selected-app seeding from CacheDeck SQLite and an optional one-click import from an old target container.
+- Added upgrade aliases for the known v0.7 working-directory, user, command and job-state defaults so existing Unraid variables do not accidentally send embedded data to temporary legacy paths.
+- Added embedded-engine readiness, core version and execution-mode reporting to the API and Dashboard.
+- Added LANCache Steam DNS resolution to Diagnostics.
+- Removed the Docker-socket requirement for the embedded provider; it remains optional for legacy mode/import.
+- Updated Compose and Unraid templates for the all-in-one architecture.
+- Added bundled-core verification and embedded-provider assertions to GitHub Actions.
+- Kept capability reporting honest: the v0.8 beta still uses SteamPrefill as a transitional core and does not yet claim direct structured SteamKit progress or authoritative cache-object indexing.
+
 ## 0.7.4
 
 - Added persistent CacheDeck-managed schedules with create, edit, enable/disable and remove controls.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import ipaddress
 import os
 import pty
 import select
@@ -10,6 +11,7 @@ import shlex
 import signal
 import struct
 import subprocess
+import socket
 import termios
 import threading
 import uuid
@@ -62,12 +64,50 @@ def read_packaged_version() -> str:
 
 APP_VERSION: Final = os.getenv("CACHEDECK_VERSION", "").strip() or read_packaged_version()
 
-TARGET_CONTAINER: Final = os.getenv("TARGET_CONTAINER", "LANCache-Prefill")
-PREFILL_DIR: Final = os.getenv("PREFILL_DIR", "/lancacheprefill/SteamPrefill")
-PREFILL_USER: Final = os.getenv("PREFILL_USER", "prefill")
-PREFILL_COMMAND: Final = os.getenv("PREFILL_COMMAND", "./SteamPrefill prefill")
-PREFILL_STATE_DIR: Final = os.getenv("PREFILL_STATE_DIR", "/tmp/cachedeck")
 CONFIG_DIR: Final = Path(os.getenv("CACHEDECK_CONFIG_DIR", "/config"))
+PROVIDER_ID: Final = os.getenv("CACHEDECK_PROVIDER", "embedded-steam").strip() or "embedded-steam"
+EMBEDDED_PROVIDER_IDS: Final = {"embedded", "embedded-steam", "native", "native-steam"}
+EMBEDDED_ENGINE_DIR: Final = os.getenv(
+    "CACHEDECK_STEAM_ENGINE_DIR", str(CONFIG_DIR / "steam-engine")
+)
+EMBEDDED_ENGINE_BINARY: Final = os.getenv(
+    "CACHEDECK_STEAM_ENGINE_BINARY", str(Path(EMBEDDED_ENGINE_DIR) / "SteamPrefill")
+)
+EMBEDDED_ENGINE_VERSION: Final = os.getenv("CACHEDECK_STEAM_ENGINE_VERSION", "unknown").strip() or "unknown"
+TARGET_CONTAINER: Final = os.getenv("TARGET_CONTAINER", "LANCache-Prefill")
+LEGACY_TARGET_CONTAINER: Final = os.getenv("CACHEDECK_LEGACY_TARGET_CONTAINER", TARGET_CONTAINER)
+EMBEDDED_PROVIDER_ACTIVE: Final = PROVIDER_ID.casefold() in EMBEDDED_PROVIDER_IDS
+
+# Existing Unraid installations may retain v0.7 provider variables after the
+# image is upgraded. Treat only the known v0.7 defaults as migration aliases so
+# embedded-steam starts in its persistent directory without requiring users to
+# delete every old template field first. Custom values remain respected.
+_raw_prefill_dir = os.getenv("PREFILL_DIR", "").strip()
+PREFILL_DIR: Final = (
+    EMBEDDED_ENGINE_DIR
+    if EMBEDDED_PROVIDER_ACTIVE
+    and _raw_prefill_dir in {"", "/lancacheprefill/SteamPrefill"}
+    else (_raw_prefill_dir or "/lancacheprefill/SteamPrefill")
+)
+_raw_prefill_user = os.getenv("PREFILL_USER", "").strip()
+PREFILL_USER: Final = (
+    ""
+    if EMBEDDED_PROVIDER_ACTIVE and _raw_prefill_user in {"", "prefill"}
+    else (_raw_prefill_user or ("" if EMBEDDED_PROVIDER_ACTIVE else "prefill"))
+)
+_raw_prefill_command = os.getenv("PREFILL_COMMAND", "").strip()
+PREFILL_COMMAND: Final = (
+    f"{shlex.quote(EMBEDDED_ENGINE_BINARY)} prefill"
+    if EMBEDDED_PROVIDER_ACTIVE
+    and _raw_prefill_command in {"", "./SteamPrefill prefill"}
+    else (_raw_prefill_command or "./SteamPrefill prefill")
+)
+_raw_prefill_state_dir = os.getenv("PREFILL_STATE_DIR", "").strip()
+PREFILL_STATE_DIR: Final = (
+    str(Path(EMBEDDED_ENGINE_DIR) / "state")
+    if EMBEDDED_PROVIDER_ACTIVE and _raw_prefill_state_dir in {"", "/tmp/cachedeck"}
+    else (_raw_prefill_state_dir or "/tmp/cachedeck")
+)
 HISTORY_LIMIT: Final = max(5, min(100, int(os.getenv("HISTORY_LIMIT", "20"))))
 AUTO_RESUME_INTERRUPTED: Final = os.getenv(
     "AUTO_RESUME_INTERRUPTED", "false"
@@ -83,13 +123,13 @@ HISTORY_FILE: Final = CONFIG_DIR / "history.json"
 LIBRARY_FILE: Final = CONFIG_DIR / "library.json"
 QUEUE_FILE: Final = CONFIG_DIR / "game-queue.json"
 DATABASE_FILE: Final = CONFIG_DIR / "cachedeck.db"
-PROVIDER_ID: Final = os.getenv("CACHEDECK_PROVIDER", "steamprefill")
 
 provider = create_provider(
     PROVIDER_ID,
     working_directory=PREFILL_DIR,
     container_user=PREFILL_USER,
     command=PREFILL_COMMAND,
+    embedded_binary=EMBEDDED_ENGINE_BINARY,
 )
 ALLOWED_ACTIONS: Final[dict[str, str]] = {
     "status": provider.status_command,
@@ -238,7 +278,10 @@ class EngineStatus(BaseModel):
     schema_version: int
     counts: dict[str, int]
     legacy_migration: dict[str, Any]
+    embedded_engine_ready: bool = False
     native_engine_ready: bool = False
+    download_core: dict[str, str] = Field(default_factory=dict)
+    legacy_import_available: bool = False
     message: str
 
 
@@ -341,6 +384,19 @@ def parse_int(value: str | None) -> int | None:
         return None
 
 
+
+
+def provider_is_local() -> bool:
+    return provider.execution_mode == "local"
+
+
+def local_exec_command(command: str, *, interactive: bool = False) -> list[str]:
+    shell_command = (
+        f"mkdir -p {shlex.quote(PREFILL_DIR)} {shlex.quote(PREFILL_STATE_DIR)}; "
+        f"cd {shlex.quote(PREFILL_DIR)}; {command}"
+    )
+    return ["bash", "-lc", shell_command]
+
 def docker_exec_command(command: str, *, interactive: bool = False) -> list[str]:
     args = ["docker", "exec"]
     if interactive:
@@ -372,10 +428,32 @@ async def run_process_async(
 async def run_target_command(
     command: str, *, timeout: int = 20
 ) -> subprocess.CompletedProcess[str]:
-    return await run_process_async(docker_exec_command(command), timeout=timeout)
+    args = local_exec_command(command) if provider_is_local() else docker_exec_command(command)
+    return await run_process_async(args, timeout=timeout)
 
 
 async def inspect_target_details() -> dict[str, object]:
+    if provider_is_local():
+        binary = Path(getattr(provider, "binary", EMBEDDED_ENGINE_BINARY))
+        workdir = Path(PREFILL_DIR)
+        try:
+            workdir.mkdir(parents=True, exist_ok=True)
+            writable = os.access(workdir, os.W_OK)
+        except OSError:
+            writable = False
+        available = binary.is_file() and os.access(binary, os.X_OK) and writable
+        return {
+            "running": available,
+            "status": "ready" if available else "unavailable",
+            "detail": (
+                "Embedded Steam engine is installed and its persistent directory is writable."
+                if available
+                else f"Embedded engine binary or writable directory is unavailable: {binary}."
+            ),
+            "environment": dict(os.environ),
+            "image": "embedded in CacheDeck",
+            "started_at": "",
+        }
     try:
         result = await run_process_async(
             ["docker", "inspect", TARGET_CONTAINER],
@@ -432,6 +510,13 @@ async def inspect_target_details() -> dict[str, object]:
 
 
 async def inspect_target() -> dict[str, object]:
+    if provider_is_local():
+        details = await inspect_target_details()
+        return {
+            "running": bool(details["running"]),
+            "status": str(details["status"]),
+            "detail": str(details["detail"]),
+        }
     try:
         result = await run_process_async(
             [
@@ -546,7 +631,7 @@ async def get_raw_prefill_status() -> PrefillStatus:
             state="unavailable",
             running=False,
             managed=False,
-            message=f"{TARGET_CONTAINER} is not running: {target['status']}.",
+            message=(f"Embedded Steam engine is unavailable: {target['status']}." if provider_is_local() else f"{TARGET_CONTAINER} is not running: {target['status']}."),
         )
 
     try:
@@ -563,7 +648,7 @@ async def get_raw_prefill_status() -> PrefillStatus:
             state="unavailable",
             running=False,
             managed=False,
-            message=f"Unable to run Docker: {exc}",
+            message=f"Unable to run the active provider: {exc}",
         )
 
     if result.returncode != 0:
@@ -580,7 +665,7 @@ async def get_raw_prefill_status() -> PrefillStatus:
             state="unavailable",
             running=False,
             managed=False,
-            message="SteamPrefill returned an unreadable job state.",
+            message="The active Steam provider returned an unreadable job state.",
         )
 
     managed_pid = parse_int(fields[0])
@@ -627,8 +712,8 @@ async def get_raw_prefill_status() -> PrefillStatus:
             paused=paused,
             job_id=external_job_id,
             started_at=worker_started,
-            log_available=True,
-            log_source="container",
+            log_available=not provider_is_local(),
+            log_source="none" if provider_is_local() else "container",
             message=(
                 "The scheduled/external prefill is paused. Resume it when you are ready."
                 if paused
@@ -677,7 +762,7 @@ async def get_raw_prefill_status() -> PrefillStatus:
             log_source="cachedeck" if log_available else "none",
             message=(
                 "The previous CacheDeck prefill stopped without recording an "
-                "exit code. The target container may have restarted."
+                "exit code. The engine or container may have restarted."
             ),
         )
 
@@ -725,8 +810,8 @@ async def get_prefill_status() -> PrefillStatus:
                 log_available=False,
                 log_source="none",
                 message=(
-                    "The last CacheDeck job disappeared after the target "
-                    "container restarted or its temporary state was cleared."
+                    "The last CacheDeck job disappeared after the engine "
+                    "restarted or its temporary state was cleared."
                 ),
             )
         else:
@@ -916,7 +1001,7 @@ async def launch_prefill_job(
         raise HTTPException(status_code=504, detail="Timed out while starting the prefill job.") from exc
     except OSError as exc:
         history_store.update(job_id, state="failed", finished_at=utc_now(), message=str(exc))
-        raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Unable to run the active provider: {exc}") from exc
 
     marker = result.stdout.split("\0", 1)[0]
     if result.returncode != 0 or marker != "STARTED":
@@ -1122,6 +1207,12 @@ async def managed_schedule_list() -> ManagedScheduleList:
 
 
 async def get_schedule_info() -> ScheduleInfo:
+    if provider_is_local():
+        return ScheduleInfo(
+            configured=False,
+            timezone=os.getenv("TZ", "UTC"),
+            message="The embedded engine uses CacheDeck-managed schedules; there is no separate target-container schedule.",
+        )
     details = await inspect_target_details()
     environment = details.get("environment", {})
     if not isinstance(environment, dict):
@@ -1167,73 +1258,90 @@ async def run_diagnostics() -> DiagnosticsResult:
     checks: list[DiagnosticCheck] = []
 
     socket_path = Path("/var/run/docker.sock")
-    checks.append(
-        DiagnosticCheck(
-            name="Docker socket",
-            ok=socket_path.exists(),
-            detail=(
-                "Mounted at /var/run/docker.sock."
-                if socket_path.exists()
-                else "Docker socket is not mounted."
-            ),
-        )
-    )
-
-    try:
-        docker_version = await run_process_async(
-            ["docker", "version", "--format", "{{.Server.Version}}"], timeout=10
-        )
+    if provider.requires_docker_socket:
         checks.append(
             DiagnosticCheck(
-                name="Docker API",
-                ok=docker_version.returncode == 0,
-                detail=docker_version.stdout.strip() or docker_version.stderr.strip() or "No response.",
+                name="Docker socket",
+                ok=socket_path.exists(),
+                detail=(
+                    "Mounted at /var/run/docker.sock."
+                    if socket_path.exists()
+                    else "Docker socket is not mounted."
+                ),
             )
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        checks.append(DiagnosticCheck(name="Docker API", ok=False, detail=str(exc)))
+        try:
+            docker_version = await run_process_async(
+                ["docker", "version", "--format", "{{.Server.Version}}"], timeout=10
+            )
+            checks.append(
+                DiagnosticCheck(
+                    name="Docker API",
+                    ok=docker_version.returncode == 0,
+                    detail=docker_version.stdout.strip() or docker_version.stderr.strip() or "No response.",
+                )
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            checks.append(DiagnosticCheck(name="Docker API", ok=False, detail=str(exc)))
+    else:
+        checks.append(
+            DiagnosticCheck(
+                name="Docker socket",
+                ok=True,
+                detail=(
+                    "Optional socket is mounted for legacy selection import."
+                    if socket_path.exists()
+                    else "Not required by the embedded provider."
+                ),
+            )
+        )
 
     target = await inspect_target_details()
     checks.append(
         DiagnosticCheck(
-            name="Target container",
+            name="Embedded Steam engine" if provider_is_local() else "Target container",
             ok=bool(target["running"]),
-            detail=f"{TARGET_CONTAINER}: {target['status']}",
+            detail=(
+                str(target["detail"])
+                if provider_is_local()
+                else f"{TARGET_CONTAINER}: {target['status']}"
+            ),
         )
     )
 
     if target["running"]:
+        binary_command = shlex.quote(getattr(provider, "binary", "./SteamPrefill"))
         diagnostic_command = f"""
 set +e
-printf 'user=%s\\n' "$(id -un 2>/dev/null || true)"
-printf 'uid=%s\\n' "$(id -u 2>/dev/null || true)"
-printf 'cwd=%s\\n' "$(pwd)"
-if [ -x ./SteamPrefill ]; then printf 'binary=ok\\n'; else printf 'binary=missing\\n'; fi
+printf 'user=%s\n' "$(id -un 2>/dev/null || true)"
+printf 'uid=%s\n' "$(id -u 2>/dev/null || true)"
+printf 'cwd=%s\n' "$(pwd)"
+if [ -x {binary_command} ]; then printf 'binary=ok\n'; else printf 'binary=missing\n'; fi
 mkdir -p {shlex.quote(PREFILL_STATE_DIR)} 2>/dev/null
 probe={shlex.quote(str(PurePosixPath(PREFILL_STATE_DIR) / '.cachedeck-write-test'))}
-if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\\n'; else printf 'state=readonly\\n'; fi
-./SteamPrefill --version 2>/dev/null | head -n 1 || true
+if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\n'; else printf 'state=readonly\n'; fi
+{binary_command} --version 2>/dev/null | head -n 1 || true
 """.strip()
         try:
             result = await run_target_command(diagnostic_command, timeout=15)
             output = result.stdout.strip()
             checks.append(
                 DiagnosticCheck(
-                    name="SteamPrefill executable",
+                    name="Steam engine executable",
                     ok="binary=ok" in output,
                     detail=output or result.stderr.strip() or "No output.",
                 )
             )
             checks.append(
                 DiagnosticCheck(
-                    name="Target state directory",
+                    name="Engine state directory",
                     ok="state=writeable" in output,
-                    detail=f"{PREFILL_STATE_DIR} as {PREFILL_USER or 'container default user'}",
+                    detail=f"{PREFILL_STATE_DIR} as {PREFILL_USER or 'CacheDeck process user'}",
                 )
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            checks.append(DiagnosticCheck(name="SteamPrefill executable", ok=False, detail=str(exc)))
-            checks.append(DiagnosticCheck(name="Target state directory", ok=False, detail=str(exc)))
+            checks.append(DiagnosticCheck(name="Steam engine executable", ok=False, detail=str(exc)))
+            checks.append(DiagnosticCheck(name="Engine state directory", ok=False, detail=str(exc)))
 
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -1269,9 +1377,54 @@ if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\\n'; e
         DiagnosticCheck(
             name="Prefill provider",
             ok=bool(provider.provider_id),
-            detail=f"{provider.display_name}; compatibility mode={provider.compatibility_mode}.",
+            detail=(
+                f"{provider.display_name}; execution={provider.execution_mode}; "
+                f"compatibility mode={provider.compatibility_mode}."
+            ),
         )
     )
+
+    if provider_is_local():
+        try:
+            resolved = await asyncio.to_thread(
+                socket.getaddrinfo,
+                "lancache.steamcontent.com",
+                80,
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+            )
+            addresses = sorted({item[4][0] for item in resolved})
+            private_addresses = [
+                address
+                for address in addresses
+                if ipaddress.ip_address(address).is_private
+                and not ipaddress.ip_address(address).is_loopback
+                and not ipaddress.ip_address(address).is_unspecified
+            ]
+            checks.append(
+                DiagnosticCheck(
+                    name="LANCache Steam DNS",
+                    ok=bool(private_addresses),
+                    detail=(
+                        "lancache.steamcontent.com resolves to " + ", ".join(addresses)
+                        if addresses
+                        else "lancache.steamcontent.com returned no IPv4 addresses."
+                    )
+                    + (
+                        ""
+                        if private_addresses
+                        else " Verify that this container uses the DNS path which redirects Steam content to LANCache."
+                    ),
+                )
+            )
+        except (OSError, socket.gaierror) as exc:
+            checks.append(
+                DiagnosticCheck(
+                    name="LANCache Steam DNS",
+                    ok=False,
+                    detail=f"Unable to resolve lancache.steamcontent.com: {exc}",
+                )
+            )
 
     schedule = await get_schedule_info()
     checks.append(
@@ -1281,7 +1434,7 @@ if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\\n'; e
             detail=(
                 f"{schedule.key}={schedule.expression}; next {schedule.next_run or 'unknown'}"
                 if schedule.configured
-                else f"Optional: {schedule.message}"
+                else schedule.message
             ),
         )
     )
@@ -1294,6 +1447,79 @@ if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\\n'; e
         checks=checks,
         summary=summary,
     )
+
+
+def embedded_selected_config_path() -> Path:
+    return Path(PREFILL_DIR) / "Config" / "selectedAppsToPrefill.json"
+
+
+def write_embedded_selected_app_ids(app_ids: list[int]) -> Path:
+    if not provider_is_local():
+        raise RuntimeError("The active provider does not use a local selected-app file.")
+    normalised = sorted({int(app_id) for app_id in app_ids if int(app_id) > 0})
+    destination = embedded_selected_config_path()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_text(json.dumps(normalised, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination)
+    return destination
+
+
+def seed_embedded_selection_from_database() -> int:
+    if not provider_is_local() or embedded_selected_config_path().exists():
+        return 0
+    app_ids = [
+        int(game.app_id)
+        for game in library_store.list_games()
+        if game.selected and game.app_id is not None and game.app_id > 0
+    ]
+    if not app_ids:
+        return 0
+    destination = write_embedded_selected_app_ids(app_ids)
+    state_database.append_event(
+        "engine.selection_seeded",
+        provider=provider.provider_id,
+        payload={"apps": len(set(app_ids)), "path": str(destination)},
+    )
+    return len(set(app_ids))
+
+
+async def import_legacy_selected_apps() -> tuple[int, str]:
+    if not provider_is_local():
+        raise HTTPException(status_code=409, detail="Legacy selection import is only available for the embedded provider.")
+    candidates = ("./Config/selectedAppsToPrefill.json", "/Config/selectedAppsToPrefill.json")
+    command = (
+        "for candidate in "
+        + " ".join(shlex.quote(item) for item in candidates)
+        + '; do if [ -r "$candidate" ]; then cat "$candidate"; exit 0; fi; done; exit 44'
+    )
+    try:
+        result = await run_process_async(
+            ["docker", "exec", LEGACY_TARGET_CONTAINER, "bash", "-lc", command],
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to inspect {LEGACY_TARGET_CONTAINER}: {exc}") from exc
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=404,
+            detail=result.stderr.strip() or f"No selected-app config was found in {LEGACY_TARGET_CONTAINER}.",
+        )
+    app_ids = parse_selected_app_ids_config(result.stdout)
+    if not app_ids:
+        raise HTTPException(status_code=422, detail="The legacy selected-app file contained no usable Steam app IDs.")
+    destination = write_embedded_selected_app_ids(app_ids)
+    selected_apps_from_ids(app_ids)
+    state_database.append_event(
+        "engine.legacy_selection_imported",
+        provider=provider.provider_id,
+        payload={
+            "apps": len(app_ids),
+            "legacy_target": LEGACY_TARGET_CONTAINER,
+            "destination": str(destination),
+        },
+    )
+    return len(app_ids), str(destination)
 
 
 async def read_selected_app_ids_from_config() -> list[int]:
@@ -1403,7 +1629,7 @@ async def refresh_selected_library() -> tuple[list[GameRecord], str]:
     except subprocess.TimeoutExpired:
         status_error = "SteamPrefill's detailed status command timed out."
     except OSError as exc:
-        status_error = f"Docker could not run SteamPrefill: {exc}"
+        status_error = f"The active Steam provider could not run: {exc}"
 
     if status_result is not None:
         selected = parse_selected_apps_status(status_result.stdout) if status_result.returncode == 0 else []
@@ -1458,6 +1684,15 @@ async def read_target_container_output(
     *,
     since: str | None = None,
 ) -> str:
+    if provider_is_local():
+        log_path = Path(PREFILL_STATE_DIR) / "prefill.log"
+        if not log_path.exists():
+            return ""
+        try:
+            content = await asyncio.to_thread(log_path.read_text, encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+        return "\n".join(content.splitlines()[-lines:])
     args = ["docker", "logs"]
     if since:
         args.extend(["--since", since])
@@ -1963,6 +2198,8 @@ async def lifespan(_: FastAPI):
     )
     state_database.reconcile_queue()
     with contextlib.suppress(Exception):
+        seed_embedded_selection_from_database()
+    with contextlib.suppress(Exception):
         await reconcile_provider_downloaded_state()
     start_metadata_refresh()
     recovery_task = asyncio.create_task(auto_recovery_loop())
@@ -2049,13 +2286,17 @@ async def health() -> dict[str, object]:
     return {
         "app": APP_NAME,
         "version": APP_VERSION,
-        "target": TARGET_CONTAINER,
+        "target": "Embedded Steam engine" if provider_is_local() else TARGET_CONTAINER,
+        "target_kind": "embedded" if provider_is_local() else "container",
         "prefill_dir": PREFILL_DIR,
-        "prefill_user": PREFILL_USER,
+        "prefill_user": PREFILL_USER or ("CacheDeck process" if provider_is_local() else "Container default"),
         "prefill_state_dir": PREFILL_STATE_DIR,
         "config_dir": str(CONFIG_DIR),
         "auto_resume": AUTO_RESUME_INTERRUPTED,
         "provider": provider.provider_id,
+        "docker_required": provider.requires_docker_socket,
+        "legacy_target": LEGACY_TARGET_CONTAINER,
+        "embedded_engine_version": EMBEDDED_ENGINE_VERSION if provider_is_local() else None,
         "database": str(DATABASE_FILE),
         "schema_version": SCHEMA_VERSION,
         "running": target["running"],
@@ -2076,10 +2317,19 @@ async def engine_status() -> EngineStatus:
         schema_version=SCHEMA_VERSION,
         counts=state_database.counts(),
         legacy_migration=state_database.migration_status(),
+        embedded_engine_ready=provider_is_local(),
         native_engine_ready=False,
+        download_core=(
+            {"name": "SteamPrefill", "version": EMBEDDED_ENGINE_VERSION, "mode": "bundled transitional core"}
+            if provider_is_local()
+            else {"name": "SteamPrefill", "version": "managed by target container", "mode": "legacy container"}
+        ),
+        legacy_import_available=provider_is_local() and Path("/var/run/docker.sock").exists(),
         message=(
-            "CacheDeck now owns its structured state. SteamPrefill remains the active "
-            "compatibility provider until the native Steam engine lands in v0.8."
+            "The Steam engine is embedded in CacheDeck, so a separate SteamPrefill container is no longer required. "
+            "v0.8 beta still uses the proven SteamPrefill download core while CacheDeck takes ownership of execution, state and logs."
+            if provider_is_local()
+            else "The external SteamPrefill container remains active as the legacy compatibility provider."
         ),
     )
 
@@ -2109,6 +2359,17 @@ async def retry_legacy_migration() -> dict[str, Any]:
     )
 
 
+@app.post("/api/engine/import-legacy-selection")
+async def import_legacy_selection_endpoint() -> dict[str, Any]:
+    count, destination = await import_legacy_selected_apps()
+    return {
+        "ok": True,
+        "imported": count,
+        "destination": destination,
+        "message": f"Imported {count} selected Steam apps from {LEGACY_TARGET_CONTAINER}.",
+    }
+
+
 @app.post("/api/engine/repair")
 async def repair_engine_state() -> dict[str, Any]:
     result = state_database.reconcile_queue()
@@ -2124,6 +2385,15 @@ async def backup_engine_database() -> dict[str, Any]:
 
 @app.get("/api/logs")
 async def logs(lines: int = Query(default=150, ge=10, le=2000)) -> CommandResult:
+    if provider_is_local():
+        log_path = Path(PREFILL_STATE_DIR) / "prefill.log"
+        if not log_path.exists():
+            return CommandResult(ok=True, code=0, stdout="No embedded-engine log is available yet.", stderr="")
+        try:
+            content = await asyncio.to_thread(log_path.read_text, encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to read the embedded engine log: {exc}") from exc
+        return CommandResult(ok=True, code=0, stdout="\n".join(content.splitlines()[-lines:]), stderr="")
     try:
         result = await run_process_async(
             ["docker", "logs", "--tail", str(lines), TARGET_CONTAINER], timeout=20
@@ -2131,7 +2401,7 @@ async def logs(lines: int = Query(default=150, ge=10, le=2000)) -> CommandResult
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="Timed out while reading the target container logs.") from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Unable to run the active provider: {exc}") from exc
     return CommandResult(
         ok=result.returncode == 0,
         code=result.returncode,
@@ -2158,7 +2428,7 @@ async def action(request: ActionRequest) -> CommandResult:
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="SteamPrefill did not finish within five minutes.") from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Unable to run the active provider: {exc}") from exc
     return CommandResult(
         ok=result.returncode == 0,
         code=result.returncode,
@@ -2207,7 +2477,7 @@ kill -{signal_name} "$pid"
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail=f"Timed out while trying to {operation} the prefill job.") from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Unable to run the active provider: {exc}") from exc
     if result.returncode != 0:
         raise HTTPException(status_code=409, detail=f"The active prefill process could not be {operation}d.")
 
@@ -2216,7 +2486,7 @@ kill -{signal_name} "$pid"
     return PrefillStartResult(
         ok=True,
         message=(
-            "Prefill paused. CacheDeck and the target scheduler remain online."
+            "Prefill paused. CacheDeck and its scheduler remain online."
             if paused
             else "Prefill resumed. An in-flight request may retry if it timed out while paused."
         ),
@@ -2261,7 +2531,7 @@ kill -TERM "$pid"
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="Timed out while stopping the prefill job.") from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Unable to run the active provider: {exc}") from exc
     if result.returncode != 0:
         raise HTTPException(status_code=409, detail="The managed prefill process is no longer available.")
 
@@ -2291,10 +2561,13 @@ async def prefill_log(
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=504, detail="Timed out while reading the CacheDeck prefill log.") from exc
         except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"Unable to run the active provider: {exc}") from exc
         return PrefillLogResult(ok=result.returncode == 0, source="cachedeck", stdout=result.stdout, stderr=result.stderr)
 
     if resolved_source == "container":
+        if provider_is_local():
+            output = await read_target_container_output(lines)
+            return PrefillLogResult(ok=True, source="cachedeck", stdout=output, stderr="")
         try:
             result = await run_process_async(
                 ["docker", "logs", "--tail", str(lines), TARGET_CONTAINER], timeout=20
@@ -2302,7 +2575,7 @@ async def prefill_log(
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=504, detail="Timed out while reading the target container log.") from exc
         except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"Unable to run Docker: {exc}") from exc
+            raise HTTPException(status_code=500, detail=f"Unable to run the active provider: {exc}") from exc
         return PrefillLogResult(ok=result.returncode == 0, source="container", stdout=result.stdout, stderr=result.stderr)
 
     return PrefillLogResult(ok=True, source="none", stdout="No prefill output is available yet.")
@@ -2729,8 +3002,12 @@ async def prefill_log_websocket(websocket: WebSocket) -> None:
             f"touch {shlex.quote(log_path)}; "
             f"exec tail -n 400 -f {shlex.quote(log_path)}"
         )
-        args = docker_exec_command(command)
+        args = local_exec_command(command) if provider_is_local() else docker_exec_command(command)
     else:
+        if provider_is_local():
+            await websocket.send_text("No external container log exists for the embedded engine.\n")
+            await websocket.close(code=1000)
+            return
         args = ["docker", "logs", "--tail", "400", "--follow", TARGET_CONTAINER]
 
     await stream_subprocess_to_websocket(websocket, args)
@@ -2742,9 +3019,10 @@ async def terminal(websocket: WebSocket) -> None:
         return
     target = await inspect_target()
     if not target["running"]:
+        target_name = "embedded Steam engine" if provider_is_local() else TARGET_CONTAINER
         await websocket.send_text(
             "\r\n\x1b[31mCacheDeck could not connect to "
-            f"{TARGET_CONTAINER}: {target['status']}.\x1b[0m\r\n"
+            f"{target_name}: {target['status']}.\x1b[0m\r\n"
         )
         await websocket.close(code=1011)
         return
@@ -2756,9 +3034,14 @@ async def terminal(websocket: WebSocket) -> None:
     environment = os.environ.copy()
     environment["TERM"] = "xterm-256color"
 
+    terminal_args = (
+        local_exec_command("exec bash", interactive=True)
+        if provider_is_local()
+        else docker_exec_command("exec bash", interactive=True)
+    )
     try:
         process = subprocess.Popen(
-            docker_exec_command("exec bash", interactive=True),
+            terminal_args,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
@@ -2769,7 +3052,7 @@ async def terminal(websocket: WebSocket) -> None:
     except OSError as exc:
         os.close(master_fd)
         os.close(slave_fd)
-        await websocket.send_text(f"\r\n\x1b[31mUnable to start Docker terminal: {exc}\x1b[0m\r\n")
+        await websocket.send_text(f"\r\n\x1b[31mUnable to start provider terminal: {exc}\x1b[0m\r\n")
         await websocket.close(code=1011)
         return
 

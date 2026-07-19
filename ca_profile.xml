@@ -1,10 +1,11 @@
 <?xml version="1.0"?>
 <CommunityApplications>
   <Profile>
-    CacheDeck is maintained by Danny. It provides a visual game library,
-    CacheDeck-owned SQLite state, a persistent update queue, browser controls
-    and a compatibility provider for SteamPrefill and LANCache. Support and source code
-    are available through the CacheDeck GitHub repository.
+    CacheDeck is maintained by Danny. Version 0.8 includes an embedded Steam
+    prefill engine, CacheDeck-owned SQLite state, a visual game library,
+    persistent queue, schedules, browser controls and a legacy SteamPrefill
+    compatibility provider. Support and source code are available through the
+    CacheDeck GitHub repository.
   </Profile>
   <Icon>https://raw.githubusercontent.com/DarmachD/CacheDeck/main/icon.svg</Icon>
   <WebPage>https://github.com/DarmachD/CacheDeck</WebPage>

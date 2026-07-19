@@ -8,13 +8,17 @@ services:
     ports:
       - "8088:8080"
     environment:
-      CACHEDECK_PROVIDER: steamprefill
-      TARGET_CONTAINER: LANCache-Prefill
-      PREFILL_DIR: /lancacheprefill/SteamPrefill
-      PREFILL_USER: prefill
-      PREFILL_STATE_DIR: /tmp/cachedeck
+      CACHEDECK_PROVIDER: embedded-steam
+      CACHEDECK_STEAM_ENGINE_DIR: /config/steam-engine
+      PREFILL_STATE_DIR: /config/steam-engine/state
       CACHEDECK_CONFIG_DIR: /config
       AUTO_RESUME_INTERRUPTED: "false"
+      TZ: Europe/London
+      # Optional: name of the old provider container used by the one-click
+      # selected-game import while the Docker socket is mounted.
+      CACHEDECK_LEGACY_TARGET_CONTAINER: LANCache-Prefill
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./cachedeck-config:/config
+      # Optional for importing the old selected-game list or using the legacy
+      # steamprefill provider. It is not required by embedded-steam.
+      # - /var/run/docker.sock:/var/run/docker.sock

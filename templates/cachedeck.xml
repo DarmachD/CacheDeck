@@ -9,21 +9,21 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/DarmachD/CacheDeck/issues</Support>
   <Project>https://github.com/DarmachD/CacheDeck</Project>
-  <Overview>Structured LANCache prefill control plane with a visual game library, persistent queue, SQLite state, live progress, scheduling and diagnostics.</Overview>
+  <Overview>All-in-one LANCache Steam prefill control plane with an embedded engine, visual game library, persistent queue, schedules, live progress and diagnostics.</Overview>
   <Description>
-    CacheDeck provides a browser control plane for SteamPrefill and LANCache.
-    It owns a persistent SQLite game catalogue, queue, run history and structured
-    event state while SteamPrefill remains the v0.7 compatibility provider. Select
-    games, queue one-click updates, launch detached jobs and reconnect to live
-    output without opening an Unraid terminal.
+    CacheDeck v0.8 can run its Steam prefill engine inside the CacheDeck container,
+    removing the requirement for a separate SteamPrefill app. It owns a persistent
+    SQLite catalogue, queue, run history, schedules and structured activity. The
+    older target-container provider remains available for compatibility.
   </Description>
   <Category>Tools:Utilities Network:Other</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/DarmachD/CacheDeck/main/templates/cachedeck.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/DarmachD/CacheDeck/main/icon.svg</Icon>
   <Requires>
-    An existing SteamPrefill container. CacheDeck requires access to the Docker
-    socket and should remain accessible only on trusted networks.
+    A working LANCache and Steam DNS redirection. Docker socket access is optional
+    for the embedded provider and is only needed for legacy-provider mode or the
+    one-click import from an old SteamPrefill container.
   </Requires>
 
   <Config
@@ -38,22 +38,11 @@
     Mask="false">8088</Config>
 
   <Config
-    Name="Docker Socket"
-    Target="/var/run/docker.sock"
-    Default="/var/run/docker.sock"
-    Mode="rw"
-    Description="Required so CacheDeck can inspect and execute commands in SteamPrefill."
-    Type="Path"
-    Display="always"
-    Required="true"
-    Mask="false">/var/run/docker.sock</Config>
-
-  <Config
     Name="Persistent Config"
     Target="/config"
     Default="/mnt/user/appdata/cachedeck"
     Mode="rw"
-    Description="Persistent CacheDeck SQLite database, history, game catalogue and update queue."
+    Description="Persistent CacheDeck database, embedded Steam engine data, credentials, logs and schedules."
     Type="Path"
     Display="always"
     Required="true"
@@ -62,71 +51,93 @@
   <Config
     Name="Prefill Provider"
     Target="CACHEDECK_PROVIDER"
-    Default="steamprefill"
+    Default="embedded-steam"
     Mode=""
-    Description="v0.7 supports the SteamPrefill compatibility provider. Native Steam arrives in a later release."
-    Type="Variable"
-    Display="advanced"
-    Required="true"
-    Mask="false">steamprefill</Config>
-
-  <Config
-    Name="SteamPrefill Container"
-    Target="TARGET_CONTAINER"
-    Default="LANCache-Prefill"
-    Mode=""
-    Description="Exact name of the existing SteamPrefill container."
+    Description="Use embedded-steam for the all-in-one v0.8 engine, or steamprefill to control an existing external container."
     Type="Variable"
     Display="always"
     Required="true"
-    Mask="false">LANCache-Prefill</Config>
+    Mask="false">embedded-steam</Config>
 
   <Config
-    Name="SteamPrefill Directory"
+    Name="Provider Working Directory"
     Target="PREFILL_DIR"
-    Default="/lancacheprefill/SteamPrefill"
+    Default="/config/steam-engine"
     Mode=""
-    Description="SteamPrefill installation directory inside the target container."
+    Description="Persistent working directory for embedded-steam. Legacy mode normally uses /lancacheprefill/SteamPrefill inside the target container."
     Type="Variable"
     Display="advanced"
     Required="true"
-    Mask="false">/lancacheprefill/SteamPrefill</Config>
+    Mask="false">/config/steam-engine</Config>
 
   <Config
-    Name="SteamPrefill User"
-    Target="PREFILL_USER"
-    Default="prefill"
+    Name="Provider Job State Directory"
+    Target="PREFILL_STATE_DIR"
+    Default="/config/steam-engine/state"
     Mode=""
-    Description="Linux user CacheDeck should use inside the target container."
+    Description="Detached-job PID, exit status and live log directory. Keep this under /config for embedded-steam."
+    Type="Variable"
+    Display="advanced"
+    Required="true"
+    Mask="false">/config/steam-engine/state</Config>
+
+  <Config
+    Name="Timezone"
+    Target="TZ"
+    Default="Europe/London"
+    Mode=""
+    Description="Default timezone used by the embedded engine and schedule display."
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">Europe/London</Config>
+
+  <Config
+    Name="Docker Socket (Optional)"
+    Target="/var/run/docker.sock"
+    Default="/var/run/docker.sock"
+    Mode="rw"
+    Description="Not required by embedded-steam. Add it only for legacy provider mode or importing the selected-game list from an old SteamPrefill container."
+    Type="Path"
+    Display="advanced"
+    Required="false"
+    Mask="false"></Config>
+
+  <Config
+    Name="Legacy SteamPrefill Container"
+    Target="TARGET_CONTAINER"
+    Default="LANCache-Prefill"
+    Mode=""
+    Description="External SteamPrefill container name used by legacy mode and optional selected-game import."
     Type="Variable"
     Display="advanced"
     Required="false"
-    Mask="false">prefill</Config>
+    Mask="false">LANCache-Prefill</Config>
 
   <Config
-    Name="Target Job State Directory"
-    Target="PREFILL_STATE_DIR"
-    Default="/tmp/cachedeck"
+    Name="Legacy SteamPrefill User"
+    Target="PREFILL_USER"
+    Default=""
     Mode=""
-    Description="Writable directory inside SteamPrefill used for the active detached job and live output."
+    Description="Leave blank for embedded-steam. Legacy mode commonly uses prefill."
     Type="Variable"
     Display="advanced"
-    Required="true"
-    Mask="false">/tmp/cachedeck</Config>
+    Required="false"
+    Mask="false"></Config>
 
   <Config
     Name="Automatic Resume"
     Target="AUTO_RESUME_INTERRUPTED"
     Default="false"
     Mode=""
-    Description="When true, CacheDeck makes one automatic restart attempt after a managed prefill is interrupted by a target-container restart."
+    Description="When true, CacheDeck makes one automatic restart attempt after a managed prefill is interrupted."
     Type="Variable"
     Display="advanced"
     Required="false"
     Mask="false">false</Config>
 
   <Config
-    Name="Allowed WebSocket Origins"
+    Name="Allowed Browser Origins"
     Target="CACHEDECK_ALLOWED_ORIGINS"
     Default=""
     Mode=""

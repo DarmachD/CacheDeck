@@ -1,47 +1,60 @@
 # CacheDeck
 
-CacheDeck is a browser control plane for LANCache game prefilling. The current
-provider is an existing
-[SteamPrefill](https://github.com/tpill90/steam-lancache-prefill) container, but
-CacheDeck now owns its game catalogue, queue, run history and structured event
-state instead of treating terminal output as its database.
+CacheDeck is a browser control plane for keeping Steam content warm in a
+LANCache. It provides a visual game library, persistent queue, detached jobs,
+schedules, structured activity, diagnostics and an interactive console.
 
-Version 0.7.4 is the hardened compatibility foundation for CacheDeck's native Steam prefill engine. It
-keeps SteamPrefill as the working compatibility provider, so existing downloads,
-schedules and authentication continue to work while the native provider is
-built incrementally.
+## v0.8 embedded-engine beta
+
+CacheDeck 0.8 defaults to the `embedded-steam` provider. The official
+SteamPrefill download core is bundled inside the CacheDeck image and runs as a
+child process in the same container. A separate SteamPrefill Docker container
+is therefore no longer required for normal operation.
+
+This is a transitional engine rather than a direct SteamKit rewrite:
+
+- CacheDeck owns process execution, schedules, logs, queue and SQLite state.
+- SteamPrefill 3.6.0 remains the component which logs in to Steam, resolves
+  depots/manifests and sends downloads through LANCache.
+- The provider boundary remains in place so a future structured Steam worker can
+  replace that core without another UI or database migration.
+- Structured per-chunk progress, authoritative cache residency and safe per-game
+  purging are not yet available.
+
+The legacy `steamprefill` provider remains available for installations that want
+CacheDeck to control an existing external SteamPrefill container.
 
 ## Features
 
-- Detached prefills continue after the browser or laptop disconnects
-- Reconnectable live output using a WebSocket stream
-- Detection of jobs started by SteamPrefill's scheduler or another client
-- Pause and resume controls for active CacheDeck or scheduler-started prefills
-- Games tab with Steam artwork, selected/downloaded/queued state and honest known/unknown progress
-- Persistent per-game update queue with one-click and bulk **Check & update**
-- Search, filters, sorting and comfortable/compact library density
-- Compressed transfer totals, estimated queue size and latest-run amounts
-- CacheDeck-owned SQLite state database under `/config`
-- Provider-neutral game, queue, job, depot and manifest schema
-- Structured engine events for game, queue and job state changes
-- Automatic one-time import from v0.6 JSON state without deleting the originals
-- Provider capability reporting so unsupported features are not faked in the UI
-- Persistent run history and optional one-shot restart recovery
-- CacheDeck-managed schedule creation, editing, enabling/disabling, removal and run-now controls
-- Environment, provider and SQLite diagnostics
-- Lazy-loaded interactive SteamPrefill console
-- Copy, download, clear-view and full-screen logs
-- Same-origin WebSocket protection, with optional explicit reverse-proxy origins
-- Bundled terminal assets, Docker/GHCR packaging and an Unraid template
+- Embedded Steam prefill engine; no separate prefill container required
+- Detached downloads which continue after the browser disconnects
+- Pause, resume and stop controls
+- Visual Steam library with artwork, queue and verification state
+- One-click and bulk **Check & update** actions
+- Persistent SQLite catalogue, queue, history, schedules and activity
+- Multiple editable timezone-aware cron schedules
+- Reconnectable live logs and an on-demand interactive terminal
+- Historical log scanning and manual verification overrides
+- Database backup, repair and installation diagnostics
+- Same-origin protection for WebSockets and state-changing HTTP requests
+- Optional legacy-provider and selected-game import support
+- Docker, GHCR and Unraid Community Applications packaging
 
 ## Requirements
 
-- A working SteamPrefill Docker container for the v0.7 compatibility provider
-- Access to `/var/run/docker.sock`
-- The SteamPrefill path and user used by the target container
+For the default embedded provider:
+
+- A working LANCache installation
+- DNS inside the CacheDeck container which resolves
+  `lancache.steamcontent.com` to your LANCache address
 - A persistent `/config` mapping
-- A trusted LAN, or an authenticated reverse proxy; CacheDeck has no built-in
-  user authentication
+- Network access to Steam
+- A trusted LAN or authenticated reverse proxy; CacheDeck has no built-in user
+  authentication
+
+The Docker socket is **not required** by `embedded-steam`. Mount it only when
+using the legacy provider or the one-click selected-game import from an old
+SteamPrefill container.
 
 ## Docker Compose
 
@@ -54,225 +67,201 @@ services:
     ports:
       - "8088:8080"
     environment:
-      CACHEDECK_PROVIDER: steamprefill
-      TARGET_CONTAINER: LANCache-Prefill
-      PREFILL_DIR: /lancacheprefill/SteamPrefill
-      PREFILL_USER: prefill
-      PREFILL_STATE_DIR: /tmp/cachedeck
+      CACHEDECK_PROVIDER: embedded-steam
+      CACHEDECK_STEAM_ENGINE_DIR: /config/steam-engine
+      PREFILL_STATE_DIR: /config/steam-engine/state
       CACHEDECK_CONFIG_DIR: /config
       AUTO_RESUME_INTERRUPTED: "false"
-      # Optional when a reverse proxy gives the browser a different origin:
-      # CACHEDECK_ALLOWED_ORIGINS: https://cachedeck.example.com
+      TZ: Europe/London
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./cachedeck-config:/config
 ```
 
 Open `http://YOUR-SERVER-IP:8088`.
 
-## v0.7 engine foundations
+When custom DNS is required, configure the container to use the same DNS path as
+other LANCache clients. CacheDeck Diagnostics reports the IPv4 address returned
+for `lancache.steamcontent.com` and warns when it does not look like a private
+LAN address.
 
-The active engine is visible on the Dashboard. In v0.7 it reports:
+## First run
 
-- **Provider:** SteamPrefill compatibility provider
-- **State owner:** CacheDeck SQLite
-- **Structured progress:** unavailable from the provider, so legacy output is
-  still parsed where necessary
-- **Depot/manifest tracking:** schema ready but not populated until the native
-  Steam provider arrives
-- **Per-game purge:** unavailable because LANCache stores shared HTTP objects
+1. Open CacheDeck.
+2. Select **Select games**.
+3. Complete Steam login/Steam Guard in the interactive console.
+4. Choose the games to prefill and save the selection.
+5. Start a prefill or create a schedule.
 
-The provider interface separates CacheDeck's UI and persistent state from the
-program that performs the download. The next native provider can therefore
-write exact app, depot, manifest, queue and progress events without replacing
-the web application or migrating the library again.
-
-The engine API is available at:
+Steam session/configuration data is stored under:
 
 ```text
-/api/engine
-/api/engine/events?limit=100
+/config/steam-engine/Config
 ```
 
-## Persistent jobs and state
-
-The **Start prefill** button launches the active provider as a detached process
-inside the target container. Closing the browser, disconnecting the computer or
-restarting only CacheDeck does not stop that job.
-
-Two locations are used deliberately:
-
-- `PREFILL_STATE_DIR` is inside the SteamPrefill target container and stores the
-  active PID, exit code and live log. Its default is `/tmp/cachedeck`.
-- `CACHEDECK_CONFIG_DIR` is inside CacheDeck and should be mapped to persistent
-  appdata. CacheDeck's main state file is `/config/cachedeck.db`.
-
-SQLite may also create `cachedeck.db-wal` and `cachedeck.db-shm`; keep all three
-inside the same persistent directory.
-
-On the first v0.7 start, CacheDeck imports these v0.6 files when present:
+The embedded binary and job state are stored under:
 
 ```text
-/config/library.json
-/config/game-queue.json
-/config/history.json
+/config/steam-engine/SteamPrefill
+/config/steam-engine/state
 ```
 
-The source JSON files are preserved as a rollback/reference copy. CacheDeck then
-uses SQLite for new state. The migration status and imported record counts are
-shown in the Engine card.
+Protect the complete `/config` directory as application credentials and session
+data may be present within it.
 
-The **Pause prefill** button temporarily freezes the active SteamPrefill process.
-Resume continues the process, although a network request that timed out during a
-long pause may retry. A target-container restart still terminates the process;
-`AUTO_RESUME_INTERRUPTED=true` enables one restart attempt.
+## Upgrading from v0.7
 
-When the target log says `SteamPrefill already running, aborting schedule`, the
-active prefill was not stopped. The scheduler skipped only its duplicate launch.
+The image defaults to the new embedded provider. Existing CacheDeck database,
+game metadata, queue, run history and schedules remain in `/config/cachedeck.db`.
 
-## Games view
+CacheDeck attempts to seed the embedded engine's selected-app file from its own
+SQLite library when no embedded selection exists. On the Engine card, **Import
+old selection** can instead copy `selectedAppsToPrefill.json` from the former
+`LANCache-Prefill` container when the Docker socket is temporarily mounted.
 
-CacheDeck first reads SteamPrefill's saved `selectedAppsToPrefill.json`, which
-allows selected games to appear even when Steam's manifest service is failing.
-It then attempts the heavier `select-apps status --no-ansi` scan for compressed
-transfer sizes. Names and artwork are resolved in the background with exponential
-retry backoff and persisted in CacheDeck's database. Normal Games-view polling no
-longer restarts that metadata work.
+The importer intentionally copies only selected app IDs. Steam credentials and
+session data are not copied from another container, so complete Steam login once
+inside CacheDeck.
 
-CacheDeck tracks SteamPrefill output incrementally and persists the log cursor and
-active game name in SQLite. This allows a completion line to remain attributable
-after log rotation or after the original `Starting ...` line has fallen out of the
-visible tail. Where SteamPrefill does not report a trustworthy percentage, the UI
-shows **Progress unknown** instead of a misleading 0%.
+Recommended Unraid values:
 
-A per-game **Check & update** action adds the Steam app to CacheDeck's queue. When
-the provider is free, CacheDeck runs a targeted prefill. SteamPrefill does not
-expose a separate dry-run update check, so checking and applying an available
-update remain one operation while it is the active provider.
+```text
+CACHEDECK_PROVIDER=embedded-steam
+PREFILL_DIR=/config/steam-engine
+PREFILL_STATE_DIR=/config/steam-engine/state
+PREFILL_USER=
+```
 
-**Downloaded** means CacheDeck observed a successful prefill/check for the game.
-It does not prove every underlying HTTP object still exists in LANCache after
-cache eviction or manual clearing. Displayed sizes are compressed transfer
-estimates rather than exact physical cache usage.
+CacheDeck recognises the exact v0.7 defaults and redirects them to the embedded
+paths automatically, but updating the template keeps the configuration clear.
+Custom legacy paths remain untouched.
 
-LANCache stores shared CDN objects, not isolated installed-game folders. A safe
-per-game uninstall is therefore not available. **Forget CacheDeck status** only
-resets CacheDeck's record and does not delete cache data.
+After importing the old selection, remove the Docker socket mapping unless it is
+still needed for another reason. Disable the old SteamPrefill container and its
+`GLOBAL_SCHEDULE` only after confirming the embedded engine can log in and run a
+test prefill.
+
+## Legacy external-container provider
+
+To retain the v0.7 architecture:
+
+```yaml
+environment:
+  CACHEDECK_PROVIDER: steamprefill
+  TARGET_CONTAINER: LANCache-Prefill
+  PREFILL_DIR: /lancacheprefill/SteamPrefill
+  PREFILL_USER: prefill
+  PREFILL_STATE_DIR: /tmp/cachedeck
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
+  - ./cachedeck-config:/config
+```
+
+This mode requires the Docker socket and the external target container.
+
+## Games and cache-state accuracy
+
+**Downloaded** means CacheDeck observed or recorded a successful prefill/check.
+**Unverified** means CacheDeck cannot prove the historical state; it does not
+mean the game is definitely absent from LANCache.
+
+SteamPrefill tracks previously prefetched versions and normally skips games that
+are already current. CacheDeck adds `--verbose --no-ansi` to managed jobs so it
+can recover as much per-game state as the transitional core reports.
+
+LANCache stores shared HTTP objects rather than isolated game installations.
+Objects can be evicted and transfer size does not equal exact disk usage.
+Consequently CacheDeck does not offer a deceptive per-game uninstall button.
 
 ## Schedules
 
-CacheDeck can own multiple persistent five-field cron schedules from the
-Dashboard. Each schedule has a name, timezone and enabled state, and can be
-created, edited, removed or started immediately. Schedule state is stored in
-`/config/cachedeck.db`, and jobs are launched server-side without requiring an
-open browser. If a scheduled run occurs while another prefill is active, that
-occurrence is recorded as skipped rather than starting a duplicate.
+Schedules are created, edited, enabled, disabled, run immediately and removed
+from the Dashboard. They use five-field cron expressions and an IANA timezone,
+and are persisted in `/config/cachedeck.db`.
 
-The SteamPrefill compatibility provider also detects schedules configured on the
-target container through these environment variables:
+Example nightly schedule:
 
-- `GlobalSchedule`
-- `GLOBAL_SCHEDULE`
-- `PREFILL_SCHEDULE`
-- `STEAMPREFILL_SCHEDULE`
-- `SCHEDULE`
+```text
+0 2 * * *
+Europe/London
+```
 
-A detected target-container schedule remains read-only because Docker cannot
-change a running container's environment safely. Disable `GLOBAL_SCHEDULE` in
-the Unraid template when CacheDeck-managed schedules should be the only source
-of automatic runs. Both schedule types show their timezone and next expected
-run in the Dashboard.
+A scheduled occurrence is recorded as skipped when a prefill is already active.
+The browser does not need to remain open.
+
+## Persistent state and backups
+
+Primary state:
+
+```text
+/config/cachedeck.db
+/config/cachedeck.db-wal
+/config/cachedeck.db-shm
+```
+
+Database backups created from the Engine card are placed in:
+
+```text
+/config/backups
+```
+
+Steam engine files, credentials and logs live beneath `/config/steam-engine`.
+Include the full `/config` directory in backups.
 
 ## Diagnostics
 
-The diagnostics panel checks:
+Diagnostics checks:
 
-- Docker socket and Docker API access
-- Target-container availability
-- SteamPrefill executable and writable job-state directory
-- Persistent `/config` access
-- CacheDeck SQLite `quick_check`, schema and record count
-- Active provider and compatibility mode
-- Detected schedule information
+- Embedded binary and writable engine directories
+- LANCache Steam DNS resolution
+- Persistent config access
+- SQLite integrity and schema
+- Provider mode and capability reporting
+- Schedule detection
+- Docker socket/API only when the selected provider requires them
 
-The output omits the target container's full environment so secrets are not
-copied into support posts.
+## Security
 
-## WebSocket origin protection
-
-WebSockets accept same-origin browser connections by default. Reverse proxies
-that deliberately use another public origin can set a comma-separated allowlist:
+Keep CacheDeck LAN-only or place it behind an authenticated reverse proxy.
+Same-origin browser requests work by default. Deliberate alternate proxy origins
+can be allowed with:
 
 ```text
-CACHEDECK_ALLOWED_ORIGINS=https://cachedeck.example.com,https://other.example.com
+CACHEDECK_ALLOWED_ORIGINS=https://cachedeck.example.com
 ```
 
-Do not set `*` unless the application is already protected by a trusted
-authentication layer.
-
-## Unraid
-
-The Community Applications template is:
-
-```text
-templates/cachedeck.xml
-```
-
-Before public submission:
-
-1. Push the repository to GitHub.
-2. Tag the release, for example `v0.7.4`.
-3. Confirm the test and Docker-build jobs succeed.
-4. Make the `ghcr.io/darmachd/cachedeck` package public.
-5. Test a clean install and an upgrade from v0.6.2.
-6. Run Validate and Scan in the Community Apps submission portal.
-7. Submit the repository after all checks pass.
+Do not use a wildcard unless access control is enforced before requests reach
+CacheDeck.
 
 ## Development
 
-Create a Python 3.13 virtual environment and install the requirements:
+Create a Python 3.13 environment and run the tests:
 
 ```bash
 python -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
+python -m unittest discover -s tests -v
 ```
 
-Run locally:
+Run the API locally:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Run all tests:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Build and smoke-test the same container used by GitHub Actions:
+Build the complete embedded-engine image:
 
 ```bash
 docker build -t cachedeck:test .
-docker run --rm -v "$PWD/tests:/app/tests:ro" cachedeck:test python -m unittest discover -s tests -v
+docker run --rm -p 8088:8080 -v "$PWD/test-config:/config" cachedeck:test
 ```
 
-The complete PTY and targeted-prefill workflow still requires Docker socket
-access and a real SteamPrefill target, so perform the final integration test on
-Unraid.
+GitHub Actions builds the image, runs the unit tests inside it, verifies the
+bundled SteamPrefill binary and performs HTTP API/schedule smoke tests before
+publishing.
 
-## Security
+## Third-party component
 
-Mounting the Docker socket provides powerful control over the Docker host.
-CacheDeck has no built-in authentication in this release. Keep it on trusted
-networks or behind an authenticated reverse proxy.
-
-## Licence
-
-MIT. Copyright © 2026 Danny.
-
-Bundled third-party browser assets are documented in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-
-### Verification states
-
-CacheDeck uses **Unverified** when it has no reliable evidence that a selected game is currently present in LANCache. A downloaded status records its source: observed download, Steam check, successful full run, imported provider history, or a manual user confirmation. Manual confirmation does not inspect every cached object.
+The embedded beta packages the official SteamPrefill 3.6.0 Linux x64 release.
+SteamPrefill is MIT licensed. See `THIRD_PARTY_NOTICES.md` for attribution and
+licence text.

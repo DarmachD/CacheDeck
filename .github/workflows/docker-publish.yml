@@ -29,6 +29,9 @@ jobs:
       - name: Run unit tests in image
         run: docker run --rm -v "${PWD}/tests:/app/tests:ro" cachedeck:test python -m unittest discover -s tests -v
 
+      - name: Verify embedded Steam engine
+        run: docker run --rm cachedeck:test /opt/steamprefill/SteamPrefill --version
+
       - name: Smoke-test HTTP API
         shell: bash
         run: |
@@ -76,10 +79,17 @@ jobs:
           schedules = get_json("/api/schedules")
 
           assert health["app"] == "CacheDeck"
-          assert health["provider"] == "steamprefill"
+          assert health["provider"] == "embedded-steam"
           assert isinstance(health["schema_version"], int)
           assert health["schema_version"] >= 1
-          assert engine["provider"]["id"] == "steamprefill"
+          assert engine["provider"]["id"] == "embedded-steam"
+          assert engine["provider"]["execution_mode"] == "local"
+          assert engine["embedded_engine_ready"] is True
+          assert engine["native_engine_ready"] is False
+          assert engine["download_core"]["name"] == "SteamPrefill"
+          assert engine["legacy_import_available"] is False
+          assert health["embedded_engine_version"] == "3.6.0"
+          assert health["docker_required"] is False
           assert engine["schema_version"] == health["schema_version"]
           assert schedules["schedules"] == []
 

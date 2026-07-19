@@ -564,11 +564,11 @@
       </div>
       <div>
         <h1>CacheDeck</h1>
-        <p class="subtitle">Structured game-cache controls for SteamPrefill and LANCache</p>
+        <p class="subtitle">All-in-one Steam prefill controls for LANCache</p>
       </div>
     </div>
     <div id="status-pill" class="status-pill" aria-live="polite">
-      <span class="status-dot"></span><span id="status-text">Checking SteamPrefill…</span>
+      <span class="status-dot"></span><span id="status-text">Checking Steam engine…</span>
     </div>
   </header>
 
@@ -588,7 +588,7 @@
           <button id="start-prefill" class="primary" type="button">Start prefill</button>
           <button id="pause-prefill" type="button" disabled>Pause prefill</button>
           <button id="stop-prefill" class="danger" type="button" disabled>Stop prefill</button>
-          <button id="show-status" type="button">SteamPrefill status</button>
+          <button id="show-status" type="button">Refresh game status</button>
           <button id="open-console" type="button">Open console</button>
           <button id="notify-button" type="button">Notifications: off</button>
         </div>
@@ -604,7 +604,7 @@
 
       <div id="activity-card" class="card">
         <div class="card-heading"><h2>Prefill activity</h2><span id="prefill-state" class="job-state">Checking</span></div>
-        <p id="prefill-message" class="job-message">Checking for an active SteamPrefill job…</p>
+        <p id="prefill-message" class="job-message">Checking for an active Steam prefill job…</p>
         <div class="job-grid">
           <div class="job-detail"><span>Started</span><strong id="prefill-started">—</strong></div>
           <div class="job-detail"><span>Elapsed</span><strong id="prefill-elapsed">—</strong></div>
@@ -649,13 +649,13 @@
       <div class="card">
         <h2>Connection</h2>
         <dl class="stats">
-          <div class="stat"><dt>Target container</dt><dd id="target-container">—</dd></div>
-          <div class="stat"><dt>Container state</dt><dd id="target-state">—</dd></div>
-          <div class="stat"><dt>SteamPrefill path</dt><dd id="prefill-dir">—</dd></div>
-          <div class="stat"><dt>Container user</dt><dd id="prefill-user">—</dd></div>
-          <div class="stat"><dt>Target state</dt><dd id="prefill-state-dir">—</dd></div>
+          <div class="stat"><dt id="target-name-label">Engine target</dt><dd id="target-container">—</dd></div>
+          <div class="stat"><dt id="target-state-label">Engine state</dt><dd id="target-state">—</dd></div>
+          <div class="stat"><dt id="prefill-dir-label">Engine data</dt><dd id="prefill-dir">—</dd></div>
+          <div class="stat"><dt id="prefill-user-label">Engine user</dt><dd id="prefill-user">—</dd></div>
+          <div class="stat"><dt>Job state path</dt><dd id="prefill-state-dir">—</dd></div>
           <div class="stat"><dt>Persistent config</dt><dd id="config-dir">—</dd></div>
-          <div class="stat"><dt title="Relaunches an interrupted CacheDeck-managed job after the target container restarts. This is separate from the Pause/Resume control.">Restart recovery</dt><dd id="auto-resume">—</dd></div>
+          <div class="stat"><dt title="Makes one relaunch attempt after an interrupted CacheDeck-managed job. This is separate from the Pause/Resume control.">Restart recovery</dt><dd id="auto-resume">—</dd></div>
           <div class="stat"><dt>CacheDeck version</dt><dd id="app-version">—</dd></div>
         </dl>
       </div>
@@ -665,6 +665,7 @@
         <p id="engine-message" class="muted" style="margin:0 0 12px">Loading CacheDeck's provider and state database…</p>
         <dl class="stats">
           <div class="stat"><dt>Active provider</dt><dd id="engine-provider">—</dd></div>
+          <div class="stat"><dt>Download core</dt><dd id="engine-core">—</dd></div>
           <div class="stat"><dt>State database</dt><dd id="engine-database">—</dd></div>
           <div class="stat"><dt>Schema</dt><dd id="engine-schema">—</dd></div>
           <div class="stat"><dt>Structured events</dt><dd id="engine-events">—</dd></div>
@@ -672,7 +673,7 @@
           <div class="stat"><dt>Managed schedules</dt><dd id="engine-schedules">—</dd></div>
           <div class="stat"><dt>v0.6 state import</dt><dd id="engine-migration">—</dd></div>
         </dl>
-        <div class="button-row"><button id="backup-database" type="button">Backup database</button><button id="repair-engine" type="button">Repair state</button></div>
+        <div class="button-row"><button id="backup-database" type="button">Backup database</button><button id="repair-engine" type="button">Repair state</button><button id="import-legacy-selection" type="button" hidden>Import old selection</button></div>
       </div>
 
       <div class="card">
@@ -685,7 +686,7 @@
         </div>
         <p id="schedule-message" class="muted" style="margin:0"></p>
         <div id="schedule-list" class="schedule-list"><div class="schedule-empty">Loading schedules…</div></div>
-        <details class="target-schedule">
+        <details id="target-schedule-details" class="target-schedule">
           <summary>Detected target-container schedule</summary>
           <dl class="stats" style="margin-top:8px">
             <div class="stat"><dt>Cron</dt><dd id="schedule-expression">—</dd></div>
@@ -704,7 +705,7 @@
       </div>
 
       <details id="target-logs-details" class="card">
-        <summary>Recent target-container logs</summary>
+        <summary id="provider-logs-title">Recent provider logs</summary>
         <div class="details-body">
           <div class="log-toolbar"><button id="refresh-logs" type="button">Refresh</button><button id="copy-target-logs" type="button">Copy</button></div>
           <pre id="logs" aria-live="polite">Open this section to load logs.</pre>
@@ -715,8 +716,8 @@
         <h2>How it behaves</h2>
         <div class="help">
           <p><strong>Start prefill</strong> creates a server-side job. Closing this page or shutting the laptop does not stop it.</p>
-          <p><strong>Select games</strong> opens the normal SteamPrefill selector. The interactive console is only created when needed.</p>
-          <p>Keep CacheDeck LAN-only. Docker socket access gives the container powerful control over the host.</p>
+          <p><strong>Select games</strong> opens the active Steam engine selector. The interactive console is only created when needed.</p>
+          <p id="security-help">Keep CacheDeck LAN-only. The embedded provider does not require Docker-socket access.</p>
         </div>
       </div>
     </aside>
@@ -743,7 +744,7 @@
       <div class="card-heading">
         <div>
           <h2>Steam game library</h2>
-          <p id="library-message" class="queue-note">Load the selected SteamPrefill apps to build the library view. A check automatically downloads an update when SteamPrefill finds one.</p>
+          <p id="library-message" class="queue-note">Load the selected Steam apps to build the library view. A check automatically downloads an update when the active provider finds one.</p>
         </div>
         <div class="button-row">
           <button id="library-refresh" type="button">Refresh selected games</button>
@@ -1118,14 +1119,24 @@
     try {
       const response = await fetch("/api/health", { cache: "no-store" });
       const data = await response.json();
+      const embedded = data.target_kind === "embedded";
+      $("target-name-label").textContent = embedded ? "Engine" : "Target container";
+      $("target-state-label").textContent = embedded ? "Engine state" : "Container state";
+      $("prefill-dir-label").textContent = embedded ? "Engine data" : "SteamPrefill path";
+      $("prefill-user-label").textContent = embedded ? "Process user" : "Container user";
       $("target-container").textContent = data.target;
       $("target-state").textContent = data.status;
       $("prefill-dir").textContent = data.prefill_dir;
-      $("prefill-user").textContent = data.prefill_user || "Container default";
+      $("prefill-user").textContent = data.prefill_user || (embedded ? "CacheDeck process" : "Container default");
       $("prefill-state-dir").textContent = data.prefill_state_dir;
       $("config-dir").textContent = data.config_dir;
       $("auto-resume").textContent = data.auto_resume ? "Enabled" : "Disabled";
       $("app-version").textContent = data.version;
+      $("provider-logs-title").textContent = embedded ? "Recent embedded-engine logs" : "Recent target-container logs";
+      $("target-schedule-details").hidden = embedded;
+      $("security-help").textContent = data.docker_required
+        ? "Keep CacheDeck LAN-only. Docker socket access gives the container powerful control over the host."
+        : "Keep CacheDeck LAN-only. The embedded provider does not require Docker-socket access.";
       statusPill.classList.toggle("online", data.running);
       statusPill.classList.toggle("offline", !data.running);
       statusText.textContent = data.running ? `${data.target} online` : `${data.target}: ${data.status}`;
@@ -1143,10 +1154,16 @@
       if (!response.ok) throw new Error(data.detail || "Unable to read engine status.");
       engineData = data;
       const compatibility = Boolean(data.provider && data.provider.compatibility_mode);
+      const embedded = Boolean(data.provider && data.provider.id === "embedded-steam");
       $("engine-mode").className = `job-state ${compatibility ? "finished" : "running"}`;
-      $("engine-mode").textContent = compatibility ? "Foundation" : "Native";
+      $("engine-mode").textContent = compatibility ? "Legacy" : (embedded ? "Embedded beta" : "Native");
+      $("import-legacy-selection").hidden = !embedded || !data.legacy_import_available;
       $("engine-message").textContent = data.message || "";
       $("engine-provider").textContent = data.provider && data.provider.name || "Unknown";
+      const core = data.download_core || {};
+      $("engine-core").textContent = core.name
+        ? `${core.name}${core.version && core.version !== "unknown" ? ` ${core.version}` : ""}`
+        : "—";
       $("engine-database").textContent = data.database_path || "—";
       $("engine-schema").textContent = `v${data.schema_version}`;
       $("engine-events").textContent = formatNumber(data.counts && data.counts.events || 0);
@@ -1163,6 +1180,23 @@
       $("engine-mode").className = "job-state failed";
       $("engine-mode").textContent = "Unavailable";
       $("engine-message").textContent = error.message;
+    }
+  }
+
+  async function importLegacySelection() {
+    const button = $("import-legacy-selection");
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/engine/import-legacy-selection", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to import the old selected-game list.");
+      showToast(data.message || `Imported ${data.imported || 0} selected games.`);
+      await loadLibrary(true);
+      await updateEngine();
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      button.disabled = false;
     }
   }
 
@@ -2013,6 +2047,7 @@
   });
   $("backup-database").addEventListener("click", async () => { try { const data = await enginePost("/api/engine/backup", "Database backup created."); showToast(`Backup: ${data.path}`); } catch (e) { showToast(e.message, true); } });
   $("repair-engine").addEventListener("click", async () => { try { await enginePost("/api/engine/repair", "Engine state repaired."); } catch (e) { showToast(e.message, true); } });
+  $("import-legacy-selection").addEventListener("click", importLegacySelection);
   function saveLibraryViewPreferences() {
     try {
       localStorage.setItem("cachedeck.librarySearch", $("library-search").value);
