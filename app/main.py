@@ -16,12 +16,17 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Final, Literal
+from typing import Any, Final, Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.database import SCHEMA_VERSION, StateDatabase
+from app.providers import create_provider
+from app.state import SQLiteLibraryStore, SQLiteQueueStore
 
 from app.library import (
     GameQueueItem,
@@ -65,24 +70,30 @@ HISTORY_LIMIT: Final = max(5, min(100, int(os.getenv("HISTORY_LIMIT", "20"))))
 AUTO_RESUME_INTERRUPTED: Final = os.getenv(
     "AUTO_RESUME_INTERRUPTED", "false"
 ).strip().lower() in {"1", "true", "yes", "on"}
+ALLOWED_ORIGINS: Final = tuple(
+    item.strip().rstrip("/").casefold()
+    for item in os.getenv("CACHEDECK_ALLOWED_ORIGINS", "").split(",")
+    if item.strip()
+)
 
 STATIC_DIR: Final = Path(__file__).resolve().parent / "static"
 HISTORY_FILE: Final = CONFIG_DIR / "history.json"
 LIBRARY_FILE: Final = CONFIG_DIR / "library.json"
 QUEUE_FILE: Final = CONFIG_DIR / "game-queue.json"
+DATABASE_FILE: Final = CONFIG_DIR / "cachedeck.db"
+PROVIDER_ID: Final = os.getenv("CACHEDECK_PROVIDER", "steamprefill")
 
-ALLOWED_ACTIONS: Final[dict[str, str]] = {
-    "status": "./SteamPrefill select-apps status --no-ansi",
-    "clear-cache": "./SteamPrefill clear-cache -y",
-}
-
-SCHEDULE_KEYS: Final = (
-    "GlobalSchedule",
-    "GLOBAL_SCHEDULE",
-    "PREFILL_SCHEDULE",
-    "STEAMPREFILL_SCHEDULE",
-    "SCHEDULE",
+provider = create_provider(
+    PROVIDER_ID,
+    working_directory=PREFILL_DIR,
+    container_user=PREFILL_USER,
+    command=PREFILL_COMMAND,
 )
+ALLOWED_ACTIONS: Final[dict[str, str]] = {
+    "status": provider.status_command,
+    "clear-cache": provider.clear_cache_command,
+}
+SCHEDULE_KEYS: Final = provider.schedule_keys
 
 
 class ActionRequest(BaseModel):
@@ -146,6 +157,7 @@ class PrefillLogResult(BaseModel):
 
 class HistoryRecord(BaseModel):
     job_id: str
+    provider: str = "steamprefill"
     source: Literal["cachedeck", "external"]
     state: PrefillState
     started_at: str | None = None
@@ -182,17 +194,46 @@ class DiagnosticsResult(BaseModel):
     summary: str
 
 
+class EngineEvent(BaseModel):
+    id: int
+    event_type: str
+    provider: str
+    app_id: int | None = None
+    job_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class EngineStatus(BaseModel):
+    provider: dict[str, Any]
+    database_path: str
+    schema_version: int
+    counts: dict[str, int]
+    legacy_migration: dict[str, Any]
+    native_engine_ready: bool = False
+    message: str
+
+
 class HistoryStore:
-    def __init__(self, path: Path, limit: int) -> None:
+    def __init__(
+        self,
+        path: Path,
+        limit: int,
+        database: StateDatabase | None = None,
+    ) -> None:
         self.path = path
         self.limit = limit
+        self.database = database
         self._lock = threading.Lock()
 
     def _read_unlocked(self) -> list[HistoryRecord]:
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return []
+        if self.database is not None:
+            raw = self.database.list_job_payloads(self.limit)
+        else:
+            try:
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                return []
 
         if not isinstance(raw, list):
             return []
@@ -206,16 +247,13 @@ class HistoryStore:
         return records[: self.limit]
 
     def _write_unlocked(self, records: list[HistoryRecord]) -> None:
+        payloads = [record.model_dump(mode="json") for record in records[: self.limit]]
+        if self.database is not None:
+            self.database.replace_job_payloads(payloads, self.limit)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(".tmp")
-        temp_path.write_text(
-            json.dumps(
-                [record.model_dump(mode="json") for record in records[: self.limit]],
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        temp_path.write_text(json.dumps(payloads, indent=2) + "\n", encoding="utf-8")
         temp_path.replace(self.path)
 
     def list(self) -> list[HistoryRecord]:
@@ -254,9 +292,10 @@ class HistoryStore:
         return None
 
 
-history_store = HistoryStore(HISTORY_FILE, HISTORY_LIMIT)
-library_store = LibraryStore(LIBRARY_FILE)
-queue_store = QueueStore(QUEUE_FILE)
+state_database = StateDatabase(DATABASE_FILE)
+history_store = HistoryStore(HISTORY_FILE, HISTORY_LIMIT, state_database)
+library_store = SQLiteLibraryStore(state_database)
+queue_store = SQLiteQueueStore(state_database)
 
 
 def utc_now() -> str:
@@ -399,6 +438,7 @@ async def inspect_target() -> dict[str, object]:
 
 def prefill_status_command() -> str:
     state_dir = shlex.quote(PREFILL_STATE_DIR)
+    process_match = provider.process_match_shell("$cmdline")
     return f"""
 state_dir={state_dir}
 pid_file="$state_dir/prefill.pid"
@@ -434,7 +474,7 @@ for proc_dir in /proc/[0-9]*; do
     [ "$candidate_pid" = "$$" ] && continue
     [ -r "$proc_dir/cmdline" ] || continue
     cmdline="$(tr '\\0' ' ' < "$proc_dir/cmdline" 2>/dev/null || true)"
-    if [[ "$cmdline" =~ SteamPrefill.*[[:space:]]prefill([[:space:]]|$) ]]; then
+    if {process_match}; then
         worker_pid="$candidate_pid"
         worker_state="$(ps -o stat= -p "$candidate_pid" 2>/dev/null | tr -d ' ' || true)"
         elapsed="$(ps -o etimes= -p "$candidate_pid" 2>/dev/null | tr -d ' ' || true)"
@@ -626,6 +666,7 @@ def record_from_status(status: PrefillStatus) -> HistoryRecord | None:
     )
     return HistoryRecord(
         job_id=status.job_id,
+        provider=provider.provider_id,
         source=source,
         state=status.state,
         started_at=status.started_at,
@@ -729,6 +770,7 @@ exit "$?"
 
 def build_start_command(job_id: str, started_at: str, command: str) -> str:
     state_dir = shlex.quote(PREFILL_STATE_DIR)
+    process_match = provider.process_match_shell("$cmdline")
     wrapper_script = shlex.quote(build_prefill_wrapper(job_id, started_at, command))
     wrapper_path = shlex.quote(
         str(PurePosixPath(PREFILL_STATE_DIR) / "prefill-wrapper.sh")
@@ -769,7 +811,7 @@ for proc_dir in /proc/[0-9]*; do
     [ "$candidate_pid" = "$$" ] && continue
     [ -r "$proc_dir/cmdline" ] || continue
     cmdline="$(tr '\\0' ' ' < "$proc_dir/cmdline" 2>/dev/null || true)"
-    if [[ "$cmdline" =~ SteamPrefill.*[[:space:]]prefill([[:space:]]|$) ]]; then
+    if {process_match}; then
         printf 'EXTERNAL_RUNNING\\0%s\\0' "$candidate_pid"
         exit 73
     fi
@@ -798,16 +840,8 @@ printf 'STARTED\\0%s\\0%s\\0' {shlex.quote(job_id)} "$pid"
 
 
 def managed_prefill_command(app_id: int | None = None) -> str:
-    """Build a machine-readable managed command without overriding user-supplied flags."""
-    command = PREFILL_COMMAND.strip()
-    if app_id is not None:
-        command = f"{command} {app_id}"
-    tokens = set(command.split())
-    if "--verbose" not in tokens:
-        command += " --verbose"
-    if "--no-ansi" not in tokens:
-        command += " --no-ansi"
-    return command
+    """Build the active provider's managed prefill command."""
+    return provider.managed_prefill_command(app_id)
 
 
 async def launch_prefill_job(
@@ -1092,6 +1126,32 @@ if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\\n'; e
         config_detail = str(exc)
     checks.append(DiagnosticCheck(name="Persistent config", ok=config_ok, detail=config_detail))
 
+    try:
+        state_database.initialize()
+        with state_database.connection() as connection:
+            quick_check = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+        database_ok = quick_check.casefold() == "ok"
+        database_detail = (
+            f"SQLite schema {SCHEMA_VERSION}; {state_database.counts()['games']} games; quick_check={quick_check}."
+        )
+    except Exception as exc:
+        database_ok = False
+        database_detail = str(exc)
+    checks.append(
+        DiagnosticCheck(
+            name="CacheDeck state database",
+            ok=database_ok,
+            detail=database_detail,
+        )
+    )
+    checks.append(
+        DiagnosticCheck(
+            name="Prefill provider",
+            ok=bool(provider.provider_id),
+            detail=f"{provider.display_name}; compatibility mode={provider.compatibility_mode}.",
+        )
+    )
+
     schedule = await get_schedule_info()
     checks.append(
         DiagnosticCheck(
@@ -1116,8 +1176,9 @@ if : > "$probe" 2>/dev/null; then rm -f "$probe"; printf 'state=writeable\\n'; e
 
 
 async def read_selected_app_ids_from_config() -> list[int]:
-    command = r"""
-for candidate in ./Config/selectedAppsToPrefill.json /Config/selectedAppsToPrefill.json; do
+    candidates = " ".join(shlex.quote(item) for item in provider.selected_app_config_candidates)
+    command = f"""
+for candidate in {candidates}; do
     if [ -r "$candidate" ]; then
         cat "$candidate"
         exit 0
@@ -1142,6 +1203,7 @@ def selected_apps_from_ids(app_ids: list[int]) -> list[GameRecord]:
         previous = existing.get(app_id)
         selected.append(
             SelectedApp(
+                provider=provider.provider_id,
                 app_id=app_id,
                 name=(previous.name if previous else placeholder_game_name(app_id)),
                 download_size=(previous.download_size if previous else None),
@@ -1177,7 +1239,7 @@ async def refresh_selected_library() -> tuple[list[GameRecord], str]:
     status_error = ""
     try:
         status_result = await run_target_command(
-            "./SteamPrefill select-apps status --no-ansi",
+            provider.status_command,
             timeout=300,
         )
     except subprocess.TimeoutExpired:
@@ -1508,6 +1570,12 @@ async def auto_recovery_loop() -> None:
 async def lifespan(_: FastAPI):
     with contextlib.suppress(OSError):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    state_database.initialize()
+    state_database.migrate_legacy_json(
+        library_path=LIBRARY_FILE,
+        queue_path=QUEUE_FILE,
+        history_path=HISTORY_FILE,
+    )
     recovery_task = asyncio.create_task(auto_recovery_loop())
     queue_task = asyncio.create_task(game_queue_loop())
     try:
@@ -1563,11 +1631,40 @@ async def health() -> dict[str, object]:
         "prefill_state_dir": PREFILL_STATE_DIR,
         "config_dir": str(CONFIG_DIR),
         "auto_resume": AUTO_RESUME_INTERRUPTED,
+        "provider": provider.provider_id,
+        "database": str(DATABASE_FILE),
+        "schema_version": SCHEMA_VERSION,
         "running": target["running"],
         "status": target["status"],
         "detail": target["detail"],
         "time": utc_now(),
     }
+
+
+@app.get("/api/engine", response_model=EngineStatus)
+async def engine_status() -> EngineStatus:
+    return EngineStatus(
+        provider={
+            **provider.describe(),
+            "select_games_command": provider.select_games_command,
+        },
+        database_path=str(DATABASE_FILE),
+        schema_version=SCHEMA_VERSION,
+        counts=state_database.counts(),
+        legacy_migration=state_database.migration_status(),
+        native_engine_ready=False,
+        message=(
+            "CacheDeck now owns its structured state. SteamPrefill remains the active "
+            "compatibility provider until the native Steam engine lands in v0.8."
+        ),
+    )
+
+
+@app.get("/api/engine/events", response_model=list[EngineEvent])
+async def engine_events(
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[EngineEvent]:
+    return [EngineEvent.model_validate(item) for item in state_database.list_events(limit)]
 
 
 @app.get("/api/logs")
@@ -1647,7 +1744,7 @@ async def set_prefill_paused(paused: bool) -> PrefillStartResult:
 pid={current.worker_pid}
 if ! kill -0 "$pid" 2>/dev/null; then exit 3; fi
 cmdline="$(tr '\\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
-if [[ ! "$cmdline" =~ SteamPrefill.*[[:space:]]prefill([[:space:]]|$) ]]; then exit 4; fi
+if ! {provider.process_match_shell("$cmdline")}; then exit 4; fi
 kill -{signal_name} "$pid"
 """.strip()
     try:
@@ -1826,6 +1923,7 @@ def enqueue_library_games(app_ids: list[int]) -> tuple[int, list[str]]:
         queue_item = queue_store.enqueue(
             GameQueueItem(
                 queue_id=uuid.uuid4().hex,
+                provider=provider.provider_id,
                 app_id=app_id,
                 app_name=game.name,
                 requested_at=utc_now(),
@@ -1920,6 +2018,33 @@ async def diagnostics() -> DiagnosticsResult:
     return await run_diagnostics()
 
 
+def websocket_origin_allowed(websocket: WebSocket) -> bool:
+    origin = (websocket.headers.get("origin") or "").strip().rstrip("/")
+    normalised_origin = origin.casefold()
+    if not origin:
+        return True
+    if "*" in ALLOWED_ORIGINS or normalised_origin in ALLOWED_ORIGINS:
+        return True
+    try:
+        origin_host = urlsplit(origin).netloc.casefold()
+    except ValueError:
+        return False
+    request_host = (
+        websocket.headers.get("x-forwarded-host")
+        or websocket.headers.get("host")
+        or ""
+    ).split(",", 1)[0].strip().casefold()
+    return bool(origin_host and request_host and origin_host == request_host)
+
+
+async def accept_cachedeck_websocket(websocket: WebSocket) -> bool:
+    if not websocket_origin_allowed(websocket):
+        await websocket.close(code=1008, reason="WebSocket origin is not allowed.")
+        return False
+    await websocket.accept()
+    return True
+
+
 async def stream_subprocess_to_websocket(
     websocket: WebSocket, args: list[str]
 ) -> None:
@@ -1977,7 +2102,8 @@ async def stream_subprocess_to_websocket(
 
 @app.websocket("/ws/prefill-log")
 async def prefill_log_websocket(websocket: WebSocket) -> None:
-    await websocket.accept()
+    if not await accept_cachedeck_websocket(websocket):
+        return
     requested = websocket.query_params.get("source", "auto")
     if requested not in {"auto", "cachedeck", "container", "none"}:
         requested = "auto"
@@ -2008,7 +2134,8 @@ async def prefill_log_websocket(websocket: WebSocket) -> None:
 
 @app.websocket("/ws/terminal")
 async def terminal(websocket: WebSocket) -> None:
-    await websocket.accept()
+    if not await accept_cachedeck_websocket(websocket):
+        return
     target = await inspect_target()
     if not target["running"]:
         await websocket.send_text(

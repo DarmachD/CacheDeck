@@ -13,3 +13,10 @@ private server information in a public issue.
 CacheDeck mounts the Docker socket and currently has no built-in authentication.
 Do not expose it directly to the public internet. Restrict access to a trusted
 LAN or protect it behind an authenticated reverse proxy.
+
+## WebSocket origins
+
+CacheDeck v0.7 accepts same-origin WebSocket connections by default. When an
+authenticated reverse proxy deliberately presents another browser origin, add it
+to `CACHEDECK_ALLOWED_ORIGINS`. Do not use a wildcard unless access control is
+provided before requests reach CacheDeck.

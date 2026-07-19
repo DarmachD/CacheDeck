@@ -488,7 +488,7 @@
       </div>
       <div>
         <h1>CacheDeck</h1>
-        <p class="subtitle">Persistent browser controls for SteamPrefill and LANCache</p>
+        <p class="subtitle">Structured game-cache controls for SteamPrefill and LANCache</p>
       </div>
     </div>
     <div id="status-pill" class="status-pill" aria-live="polite">
@@ -580,6 +580,19 @@
           <div class="stat"><dt>Persistent config</dt><dd id="config-dir">—</dd></div>
           <div class="stat"><dt title="Relaunches an interrupted CacheDeck-managed job after the target container restarts. This is separate from the Pause/Resume control.">Restart recovery</dt><dd id="auto-resume">—</dd></div>
           <div class="stat"><dt>CacheDeck version</dt><dd id="app-version">—</dd></div>
+        </dl>
+      </div>
+
+      <div class="card">
+        <div class="card-heading"><h2>Engine</h2><span id="engine-mode" class="job-state">Checking</span></div>
+        <p id="engine-message" class="muted" style="margin:0 0 12px">Loading CacheDeck's provider and state database…</p>
+        <dl class="stats">
+          <div class="stat"><dt>Active provider</dt><dd id="engine-provider">—</dd></div>
+          <div class="stat"><dt>State database</dt><dd id="engine-database">—</dd></div>
+          <div class="stat"><dt>Schema</dt><dd id="engine-schema">—</dd></div>
+          <div class="stat"><dt>Structured events</dt><dd id="engine-events">—</dd></div>
+          <div class="stat"><dt>Depot / manifest records</dt><dd id="engine-catalogue">—</dd></div>
+          <div class="stat"><dt>v0.6 state import</dt><dd id="engine-migration">—</dd></div>
         </dl>
       </div>
 
@@ -732,6 +745,7 @@
   let prefillRequestRunning = false;
   let prefillUpdateRunning = false;
   let diagnosticsText = "";
+  let engineData = null;
   let targetLogsLoaded = false;
   let toastTimer = null;
   let libraryData = null;
@@ -989,6 +1003,35 @@
     }
   }
 
+  async function updateEngine() {
+    try {
+      const response = await fetch("/api/engine", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to read engine status.");
+      engineData = data;
+      const compatibility = Boolean(data.provider && data.provider.compatibility_mode);
+      $("engine-mode").className = `job-state ${compatibility ? "finished" : "running"}`;
+      $("engine-mode").textContent = compatibility ? "Foundation" : "Native";
+      $("engine-message").textContent = data.message || "";
+      $("engine-provider").textContent = data.provider && data.provider.name || "Unknown";
+      $("engine-database").textContent = data.database_path || "—";
+      $("engine-schema").textContent = `v${data.schema_version}`;
+      $("engine-events").textContent = formatNumber(data.counts && data.counts.events || 0);
+      $("engine-catalogue").textContent = `${formatNumber(data.counts && data.counts.depots || 0)} / ${formatNumber(data.counts && data.counts.manifests || 0)}`;
+      const migration = data.legacy_migration || {};
+      const imported = migration.counts || {};
+      $("engine-migration").textContent = migration.errors && migration.errors.length
+        ? "Needs attention"
+        : (migration.completed
+          ? `${formatNumber(imported.games || 0)} games, ${formatNumber(imported.jobs || 0)} jobs`
+          : "Not required");
+    } catch (error) {
+      $("engine-mode").className = "job-state failed";
+      $("engine-mode").textContent = "Unavailable";
+      $("engine-message").textContent = error.message;
+    }
+  }
+
   async function runAction(action) {
     actionOutput.hidden = false;
     actionOutput.textContent = "Running…";
@@ -1177,6 +1220,10 @@
     const units = { B: 0, KB: 1, KIB: 1, MB: 2, MIB: 2, GB: 3, GIB: 3, TB: 4, TIB: 4, PB: 5, PIB: 5, EB: 6, EIB: 6 };
     const exponent = units[match[2].toUpperCase()] || 0;
     return Number(match[1]) * Math.pow(1024, exponent);
+  }
+
+  function formatNumber(value) {
+    return Number(value || 0).toLocaleString();
   }
 
   function formatBytes(value) {
@@ -1614,7 +1661,9 @@
     if (button.dataset.forgetApp) forgetGameStatus(button.dataset.forgetApp, button.dataset.gameName || "this game");
   });
 
-  $("select-games").addEventListener("click", () => openConsole("./SteamPrefill select-apps"));
+  $("select-games").addEventListener("click", () => openConsole(
+    engineData && engineData.provider && engineData.provider.select_games_command || "./SteamPrefill select-apps"
+  ));
   $("open-console").addEventListener("click", () => openConsole());
   startPrefillButton.addEventListener("click", () => controlPrefill("start"));
   pausePrefillButton.addEventListener("click", () => {
@@ -1670,12 +1719,14 @@
   initialiseLibraryDensity();
   updateNotificationButton();
   updateHealth();
+  updateEngine();
   updatePrefill();
   updateSchedule();
   updateHistory();
   window.setInterval(updateElapsed, 1000);
   window.setInterval(updatePrefill, 5000);
   window.setInterval(updateHealth, 15000);
+  window.setInterval(updateEngine, 60000);
   window.setInterval(updateSchedule, 60000);
   window.setInterval(updateHistory, 60000);
   window.setInterval(() => {

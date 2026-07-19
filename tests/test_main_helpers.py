@@ -48,5 +48,21 @@ class QueueHelperTests(unittest.TestCase):
                 main.queue_store = old_queue
 
 
+class WebSocketOriginTests(unittest.TestCase):
+    def test_allows_same_host_and_rejects_cross_site_origin(self):
+        from types import SimpleNamespace
+
+        from app.main import websocket_origin_allowed
+
+        same_host = SimpleNamespace(
+            headers={"origin": "http://cachedeck.local:8088", "host": "cachedeck.local:8088"}
+        )
+        cross_site = SimpleNamespace(
+            headers={"origin": "https://evil.example", "host": "cachedeck.local:8088"}
+        )
+        self.assertTrue(websocket_origin_allowed(same_host))
+        self.assertFalse(websocket_origin_allowed(cross_site))
+
+
 if __name__ == "__main__":
     unittest.main()

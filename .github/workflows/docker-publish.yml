@@ -16,7 +16,44 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build test image
+        run: docker build --build-arg VERSION="$(tr -d '[:space:]' < VERSION)" -t cachedeck:test .
+
+      - name: Run unit tests in image
+        run: docker run --rm -v "${PWD}/tests:/app/tests:ro" cachedeck:test python -m unittest discover -s tests -v
+
+      - name: Smoke-test HTTP API
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name cachedeck-smoke -p 18080:8080 cachedeck:test
+          trap 'docker logs cachedeck-smoke || true; docker rm -f cachedeck-smoke || true' EXIT
+          for attempt in {1..30}; do
+            if python - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("http://127.0.0.1:18080/api/engine", timeout=2) as response:
+              payload = json.load(response)
+          assert payload["schema_version"] == 1
+          assert payload["provider"]["id"] == "steamprefill"
+          PY
+            then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
   docker:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
@@ -49,7 +86,7 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=CacheDeck
-            org.opencontainers.image.description=Persistent browser UI for SteamPrefill and LANCache
+            org.opencontainers.image.description=Structured LANCache prefill control plane
             org.opencontainers.image.vendor=Danny
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
 

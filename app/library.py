@@ -26,6 +26,7 @@ QueueState = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 
 class SelectedApp(BaseModel):
+    provider: str = "steamprefill"
     app_id: int | None = None
     name: str
     download_size: str | None = None
@@ -48,6 +49,7 @@ class ProgressSnapshot(BaseModel):
 
 class GameRecord(BaseModel):
     key: str
+    provider: str = "steamprefill"
     app_id: int | None = None
     name: str
     download_size: str | None = None
@@ -66,11 +68,14 @@ class GameRecord(BaseModel):
     last_prefilled_at: str | None = None
     last_downloaded: str | None = None
     last_downloaded_job_id: str | None = None
+    current_manifest_id: str | None = None
+    target_manifest_id: str | None = None
     message: str = "Selected for prefill."
 
 
 class GameQueueItem(BaseModel):
     queue_id: str
+    provider: str = "steamprefill"
     app_id: int
     app_name: str
     requested_at: str
@@ -215,6 +220,7 @@ class LibraryStore:
                         resolved_name = previous.name
                     update = {
                         "key": key,
+                        "provider": app.provider or previous.provider,
                         "app_id": resolved_app_id,
                         "name": resolved_name,
                         "download_size": app.download_size or previous.download_size,
@@ -230,6 +236,7 @@ class LibraryStore:
                 else:
                     game = GameRecord(
                         key=key,
+                        provider=app.provider,
                         app_id=app.app_id,
                         name=app.name,
                         download_size=app.download_size,

@@ -1,7 +1,7 @@
 FROM python:3.13-slim
 
 LABEL org.opencontainers.image.title="CacheDeck" \
-      org.opencontainers.image.description="Persistent browser UI for SteamPrefill and LANCache" \
+      org.opencontainers.image.description="Structured LANCache prefill control plane" \
       org.opencontainers.image.source="https://github.com/DarmachD/CacheDeck" \
       org.opencontainers.image.licenses="MIT"
 
@@ -10,6 +10,7 @@ ARG VERSION=""
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    CACHEDECK_PROVIDER=steamprefill \
     TARGET_CONTAINER=LANCache-Prefill \
     PREFILL_DIR=/lancacheprefill/SteamPrefill \
     PREFILL_USER=prefill \

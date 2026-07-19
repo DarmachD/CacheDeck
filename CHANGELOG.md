@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+
+- Added CacheDeck-owned SQLite state at `/config/cachedeck.db`
+- Added automatic one-time migration of v0.6 library, queue and history JSON without deleting the source files
+- Added provider-neutral tables for games, queues, jobs, events, depots and manifests
+- Added a provider interface and moved SteamPrefill command/capability knowledge into the SteamPrefill compatibility provider
+- Added structured game, queue and job state events with `/api/engine/events` access
+- Added `/api/engine` capability, schema, migration and record-count reporting
+- Added a Dashboard Engine card showing the active provider and native-engine foundations
+- Added provider fields and future manifest fields to persistent game/job records
+- Added SQLite integrity and provider checks to Diagnostics
+- Added same-origin WebSocket protection plus `CACHEDECK_ALLOWED_ORIGINS` for deliberate reverse-proxy origins
+- Added GitHub Actions unit, container-build and HTTP smoke tests before image publication
+- Added database migration, persistence, event and provider unit tests
+- Kept SteamPrefill as the active download provider; native Steam downloads are intentionally deferred to v0.8
+
 ## 0.6.2
 
 - Added a direct fallback to SteamPrefill's `Config/selectedAppsToPrefill.json` when `select-apps status` fails or times out
