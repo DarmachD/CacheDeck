@@ -1,3 +1,8 @@
+import json
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from app.providers import create_provider
@@ -60,49 +65,121 @@ class EmbeddedSteamProviderTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class EmbeddedUpgradeAliasTests(unittest.TestCase):
-    def test_v07_default_variables_are_migrated_to_embedded_paths(self) -> None:
-        import json
-        import os
-        import subprocess
-        import sys
-        import tempfile
+    @staticmethod
+    def _resolve(environment_updates: dict[str, str]) -> list[str]:
+        environment = os.environ.copy()
+        environment.update(environment_updates)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json, app.main as m; "
+                    "print(json.dumps([m.EMBEDDED_ENGINE_DIR, "
+                    "m.EMBEDDED_ENGINE_BINARY, m.PREFILL_DIR, m.PREFILL_USER, "
+                    "m.PREFILL_STATE_DIR, m.PREFILL_COMMAND]))"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=environment,
+        )
+        return json.loads(result.stdout)
 
+    def test_v07_default_variables_are_migrated_to_embedded_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             engine_dir = f"{directory}/steam-engine"
-            environment = os.environ.copy()
-            environment.update(
+            values = self._resolve(
                 {
                     "CACHEDECK_PROVIDER": "embedded-steam",
                     "CACHEDECK_CONFIG_DIR": directory,
                     "CACHEDECK_STEAM_ENGINE_DIR": engine_dir,
+                    "CACHEDECK_STEAM_ENGINE_BINARY": "/config/steam-engine/SteamPrefill",
                     "PREFILL_DIR": "/lancacheprefill/SteamPrefill",
                     "PREFILL_USER": "prefill",
                     "PREFILL_STATE_DIR": "/tmp/cachedeck",
                     "PREFILL_COMMAND": "./SteamPrefill prefill",
                 }
             )
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    (
-                        "import json, app.main as m; "
-                        "print(json.dumps([m.PREFILL_DIR, m.PREFILL_USER, "
-                        "m.PREFILL_STATE_DIR, m.PREFILL_COMMAND]))"
-                    ),
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-                env=environment,
-            )
-            values = json.loads(result.stdout)
 
         self.assertEqual(values[0], engine_dir)
-        self.assertEqual(values[1], "")
-        self.assertEqual(values[2], f"{engine_dir}/state")
-        self.assertEqual(values[3], f"{engine_dir}/SteamPrefill prefill")
+        self.assertEqual(values[1], f"{engine_dir}/SteamPrefill")
+        self.assertEqual(values[2], engine_dir)
+        self.assertEqual(values[3], "")
+        self.assertEqual(values[4], f"{engine_dir}/state")
+        self.assertEqual(values[5], f"{engine_dir}/SteamPrefill prefill")
+
+    def test_first_v08_image_defaults_follow_relocated_engine_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            engine_dir = f"{directory}/relocated-engine"
+            values = self._resolve(
+                {
+                    "CACHEDECK_PROVIDER": "embedded-steam",
+                    "CACHEDECK_CONFIG_DIR": directory,
+                    "CACHEDECK_STEAM_ENGINE_DIR": engine_dir,
+                    "CACHEDECK_STEAM_ENGINE_BINARY": "/config/steam-engine/SteamPrefill",
+                    "PREFILL_DIR": "/config/steam-engine",
+                    "PREFILL_USER": "",
+                    "PREFILL_STATE_DIR": "/config/steam-engine/state",
+                    "PREFILL_COMMAND": "/config/steam-engine/SteamPrefill prefill",
+                }
+            )
+
+        self.assertEqual(
+            values,
+            [
+                engine_dir,
+                f"{engine_dir}/SteamPrefill",
+                engine_dir,
+                "",
+                f"{engine_dir}/state",
+                f"{engine_dir}/SteamPrefill prefill",
+            ],
+        )
+
+    def test_custom_embedded_paths_and_command_are_preserved(self) -> None:
+        values = self._resolve(
+            {
+                "CACHEDECK_PROVIDER": "embedded-steam",
+                "CACHEDECK_STEAM_ENGINE_DIR": "/srv/cachedeck-engine",
+                "CACHEDECK_STEAM_ENGINE_BINARY": "/srv/bin/custom-prefill",
+                "PREFILL_DIR": "/srv/workdir",
+                "PREFILL_USER": "games",
+                "PREFILL_STATE_DIR": "/srv/state",
+                "PREFILL_COMMAND": "/srv/bin/custom-prefill prefill --force",
+            }
+        )
+        self.assertEqual(
+            values,
+            [
+                "/srv/cachedeck-engine",
+                "/srv/bin/custom-prefill",
+                "/srv/workdir",
+                "games",
+                "/srv/state",
+                "/srv/bin/custom-prefill prefill --force",
+            ],
+        )
+
+    def test_legacy_provider_converts_embedded_image_defaults(self) -> None:
+        values = self._resolve(
+            {
+                "CACHEDECK_PROVIDER": "steamprefill",
+                "CACHEDECK_STEAM_ENGINE_DIR": "/config/steam-engine",
+                "CACHEDECK_STEAM_ENGINE_BINARY": "/config/steam-engine/SteamPrefill",
+                "PREFILL_DIR": "/config/steam-engine",
+                "PREFILL_USER": "",
+                "PREFILL_STATE_DIR": "/config/steam-engine/state",
+                "PREFILL_COMMAND": "/config/steam-engine/SteamPrefill prefill",
+            }
+        )
+        self.assertEqual(values[2], "/lancacheprefill/SteamPrefill")
+        self.assertEqual(values[3], "prefill")
+        self.assertEqual(values[4], "/tmp/cachedeck")
+        self.assertEqual(values[5], "./SteamPrefill prefill")
+
+
+if __name__ == "__main__":
+    unittest.main()

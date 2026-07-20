@@ -14,6 +14,11 @@
 - Removed the Docker-socket requirement for the embedded provider; it remains optional for legacy mode/import.
 - Updated Compose and Unraid templates for the all-in-one architecture.
 - Added bundled-core verification and embedded-provider assertions to GitHub Actions.
+- Fixed the in-image provider test failure caused by Docker defaults pinning the embedded binary to `/config/steam-engine` even when the engine directory was relocated.
+- Made the embedded binary, working directory, state directory and command follow a custom engine directory while preserving genuinely custom overrides.
+- Added compatibility handling when switching an existing v0.8 installation back to the legacy external-container provider.
+- Hardened the entrypoint with packaged-binary validation and custom binary-path support.
+- Changed engine readiness reporting to verify the executable and writable working directory instead of assuming every local provider is ready.
 - Kept capability reporting honest: the v0.8 beta still uses SteamPrefill as a transitional core and does not yet claim direct structured SteamKit progress or authoritative cache-object indexing.
 
 ## 0.7.4

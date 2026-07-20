@@ -67,47 +67,93 @@ APP_VERSION: Final = os.getenv("CACHEDECK_VERSION", "").strip() or read_packaged
 CONFIG_DIR: Final = Path(os.getenv("CACHEDECK_CONFIG_DIR", "/config"))
 PROVIDER_ID: Final = os.getenv("CACHEDECK_PROVIDER", "embedded-steam").strip() or "embedded-steam"
 EMBEDDED_PROVIDER_IDS: Final = {"embedded", "embedded-steam", "native", "native-steam"}
-EMBEDDED_ENGINE_DIR: Final = os.getenv(
-    "CACHEDECK_STEAM_ENGINE_DIR", str(CONFIG_DIR / "steam-engine")
-)
-EMBEDDED_ENGINE_BINARY: Final = os.getenv(
-    "CACHEDECK_STEAM_ENGINE_BINARY", str(Path(EMBEDDED_ENGINE_DIR) / "SteamPrefill")
+EMBEDDED_PROVIDER_ACTIVE: Final = PROVIDER_ID.casefold() in EMBEDDED_PROVIDER_IDS
+
+_DEFAULT_EMBEDDED_ENGINE_DIR: Final = str(CONFIG_DIR / "steam-engine")
+_raw_embedded_engine_dir = os.getenv("CACHEDECK_STEAM_ENGINE_DIR", "").strip()
+EMBEDDED_ENGINE_DIR: Final = _raw_embedded_engine_dir or _DEFAULT_EMBEDDED_ENGINE_DIR
+
+# Older v0.8 images exported every derived path as a fixed /config value. That
+# prevented CACHEDECK_STEAM_ENGINE_DIR from relocating the engine and also made
+# the in-image test suite inherit a stale binary path. Treat only those shipped
+# defaults as aliases; genuinely custom paths remain untouched.
+_raw_embedded_engine_binary = os.getenv("CACHEDECK_STEAM_ENGINE_BINARY", "").strip()
+EMBEDDED_ENGINE_BINARY: Final = (
+    str(Path(EMBEDDED_ENGINE_DIR) / "SteamPrefill")
+    if not _raw_embedded_engine_binary
+    or _raw_embedded_engine_binary == "/config/steam-engine/SteamPrefill"
+    else _raw_embedded_engine_binary
 )
 EMBEDDED_ENGINE_VERSION: Final = os.getenv("CACHEDECK_STEAM_ENGINE_VERSION", "unknown").strip() or "unknown"
 TARGET_CONTAINER: Final = os.getenv("TARGET_CONTAINER", "LANCache-Prefill")
 LEGACY_TARGET_CONTAINER: Final = os.getenv("CACHEDECK_LEGACY_TARGET_CONTAINER", TARGET_CONTAINER)
-EMBEDDED_PROVIDER_ACTIVE: Final = PROVIDER_ID.casefold() in EMBEDDED_PROVIDER_IDS
 
-# Existing Unraid installations may retain v0.7 provider variables after the
-# image is upgraded. Treat only the known v0.7 defaults as migration aliases so
-# embedded-steam starts in its persistent directory without requiring users to
-# delete every old template field first. Custom values remain respected.
+# Existing Unraid installations may retain either v0.7 legacy-provider values
+# or the first v0.8 image defaults. Resolve those known defaults according to the
+# selected provider, while preserving any path/command the user actually
+# customised.
 _raw_prefill_dir = os.getenv("PREFILL_DIR", "").strip()
-PREFILL_DIR: Final = (
-    EMBEDDED_ENGINE_DIR
-    if EMBEDDED_PROVIDER_ACTIVE
-    and _raw_prefill_dir in {"", "/lancacheprefill/SteamPrefill"}
-    else (_raw_prefill_dir or "/lancacheprefill/SteamPrefill")
-)
+if EMBEDDED_PROVIDER_ACTIVE:
+    PREFILL_DIR: Final = (
+        EMBEDDED_ENGINE_DIR
+        if _raw_prefill_dir in {
+            "",
+            "/config/steam-engine",
+            "/lancacheprefill/SteamPrefill",
+        }
+        else _raw_prefill_dir
+    )
+else:
+    PREFILL_DIR: Final = (
+        "/lancacheprefill/SteamPrefill"
+        if _raw_prefill_dir in {"", "/config/steam-engine"}
+        else _raw_prefill_dir
+    )
+
 _raw_prefill_user = os.getenv("PREFILL_USER", "").strip()
 PREFILL_USER: Final = (
     ""
     if EMBEDDED_PROVIDER_ACTIVE and _raw_prefill_user in {"", "prefill"}
     else (_raw_prefill_user or ("" if EMBEDDED_PROVIDER_ACTIVE else "prefill"))
 )
+
 _raw_prefill_command = os.getenv("PREFILL_COMMAND", "").strip()
-PREFILL_COMMAND: Final = (
-    f"{shlex.quote(EMBEDDED_ENGINE_BINARY)} prefill"
-    if EMBEDDED_PROVIDER_ACTIVE
-    and _raw_prefill_command in {"", "./SteamPrefill prefill"}
-    else (_raw_prefill_command or "./SteamPrefill prefill")
-)
+_embedded_command_aliases: Final = {
+    "",
+    "./SteamPrefill prefill",
+    "/config/steam-engine/SteamPrefill prefill",
+    "/opt/steamprefill/SteamPrefill prefill",
+}
+if EMBEDDED_PROVIDER_ACTIVE:
+    PREFILL_COMMAND: Final = (
+        f"{shlex.quote(EMBEDDED_ENGINE_BINARY)} prefill"
+        if _raw_prefill_command in _embedded_command_aliases
+        else _raw_prefill_command
+    )
+else:
+    PREFILL_COMMAND: Final = (
+        "./SteamPrefill prefill"
+        if _raw_prefill_command in _embedded_command_aliases
+        else _raw_prefill_command
+    )
+
 _raw_prefill_state_dir = os.getenv("PREFILL_STATE_DIR", "").strip()
-PREFILL_STATE_DIR: Final = (
-    str(Path(EMBEDDED_ENGINE_DIR) / "state")
-    if EMBEDDED_PROVIDER_ACTIVE and _raw_prefill_state_dir in {"", "/tmp/cachedeck"}
-    else (_raw_prefill_state_dir or "/tmp/cachedeck")
-)
+if EMBEDDED_PROVIDER_ACTIVE:
+    PREFILL_STATE_DIR: Final = (
+        str(Path(EMBEDDED_ENGINE_DIR) / "state")
+        if _raw_prefill_state_dir in {
+            "",
+            "/config/steam-engine/state",
+            "/tmp/cachedeck",
+        }
+        else _raw_prefill_state_dir
+    )
+else:
+    PREFILL_STATE_DIR: Final = (
+        "/tmp/cachedeck"
+        if _raw_prefill_state_dir in {"", "/config/steam-engine/state"}
+        else _raw_prefill_state_dir
+    )
 HISTORY_LIMIT: Final = max(5, min(100, int(os.getenv("HISTORY_LIMIT", "20"))))
 AUTO_RESUME_INTERRUPTED: Final = os.getenv(
     "AUTO_RESUME_INTERRUPTED", "false"
@@ -2308,6 +2354,8 @@ async def health() -> dict[str, object]:
 
 @app.get("/api/engine", response_model=EngineStatus)
 async def engine_status() -> EngineStatus:
+    target = await inspect_target_details()
+    embedded_ready = provider_is_local() and bool(target.get("running"))
     return EngineStatus(
         provider={
             **provider.describe(),
@@ -2317,7 +2365,7 @@ async def engine_status() -> EngineStatus:
         schema_version=SCHEMA_VERSION,
         counts=state_database.counts(),
         legacy_migration=state_database.migration_status(),
-        embedded_engine_ready=provider_is_local(),
+        embedded_engine_ready=embedded_ready,
         native_engine_ready=False,
         download_core=(
             {"name": "SteamPrefill", "version": EMBEDDED_ENGINE_VERSION, "mode": "bundled transitional core"}

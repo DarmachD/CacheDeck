@@ -32,6 +32,13 @@ jobs:
       - name: Verify embedded Steam engine
         run: docker run --rm cachedeck:test /opt/steamprefill/SteamPrefill --version
 
+      - name: Verify relocated embedded-engine paths
+        run: |
+          docker run --rm \
+            -e CACHEDECK_CONFIG_DIR=/tmp/cachedeck-relocation \
+            -e CACHEDECK_STEAM_ENGINE_DIR=/tmp/cachedeck-relocation/steam-engine \
+            cachedeck:test python -c "import app.main as m; assert m.EMBEDDED_ENGINE_BINARY == '/tmp/cachedeck-relocation/steam-engine/SteamPrefill'; assert m.PREFILL_DIR == '/tmp/cachedeck-relocation/steam-engine'; assert m.PREFILL_STATE_DIR == '/tmp/cachedeck-relocation/steam-engine/state'; assert m.PREFILL_COMMAND == '/tmp/cachedeck-relocation/steam-engine/SteamPrefill prefill'"
+
       - name: Smoke-test HTTP API
         shell: bash
         run: |
@@ -80,6 +87,8 @@ jobs:
 
           assert health["app"] == "CacheDeck"
           assert health["provider"] == "embedded-steam"
+          assert health["prefill_dir"] == "/config/steam-engine"
+          assert health["prefill_state_dir"] == "/config/steam-engine/state"
           assert isinstance(health["schema_version"], int)
           assert health["schema_version"] >= 1
           assert engine["provider"]["id"] == "embedded-steam"
