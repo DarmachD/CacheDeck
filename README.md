@@ -91,7 +91,8 @@ LAN address.
 2. Select **Select games**.
 3. Complete Steam login/Steam Guard in the interactive console.
 4. Choose the games to prefill and save the selection.
-5. Start a prefill or create a schedule.
+5. At **Run prefill now?**, choose **Yes** to hand the run to CacheDeck's managed background job, or **No** to save the selection without starting it.
+6. You can also start it later or create a schedule.
 
 Steam session/configuration data is stored under:
 

@@ -93,6 +93,9 @@ jobs:
           assert health["schema_version"] >= 1
           assert engine["provider"]["id"] == "embedded-steam"
           assert engine["provider"]["execution_mode"] == "local"
+          selector_command = engine["provider"]["select_games_command"]
+          assert "select-apps" in selector_command
+          assert "__CACHEDECK_SELECTOR_EXIT__:" in selector_command
           assert engine["embedded_engine_ready"] is True
           assert engine["native_engine_ready"] is False
           assert engine["download_core"]["name"] == "SteamPrefill"

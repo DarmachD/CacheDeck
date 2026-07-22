@@ -19,6 +19,6 @@ services:
       CACHEDECK_LEGACY_TARGET_CONTAINER: LANCache-Prefill
     volumes:
       - ./cachedeck-config:/config
-      # Optional for importing the old selected-game list or using the legacy
+      # Optional for importing the old SteamPrefill state or using the legacy
       # steamprefill provider. It is not required by embedded-steam.
       # - /var/run/docker.sock:/var/run/docker.sock

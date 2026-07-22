@@ -205,5 +205,94 @@ class SelectedStatusMergeTests(unittest.TestCase):
             main.library_store = old_library
 
 
+class SelectorManagedHandoffTests(unittest.TestCase):
+    def test_default_yes_is_translated_to_no_and_managed_handoff(self):
+        from app.main import SelectorPromptController
+
+        prompt = SelectorPromptController()
+        self.assertTrue(prompt.observe_output("Run prefill now?\n> Yes\n  No"))
+        translated, requested = prompt.translate_input("\r")
+        self.assertEqual(translated, "\x1b[B\r")
+        self.assertTrue(requested)
+        self.assertTrue(prompt.selector_finished())
+        self.assertFalse(prompt.selector_finished())
+
+    def test_explicit_no_remains_inside_selector_without_handoff(self):
+        from app.main import SelectorPromptController
+
+        prompt = SelectorPromptController()
+        prompt.observe_output("Run prefill now?")
+        translated, requested = prompt.translate_input("\x1b[B")
+        self.assertEqual(translated, "\x1b[B")
+        self.assertFalse(requested)
+        self.assertFalse(prompt.observe_output("Run prefill now?"))
+        self.assertFalse(prompt.choice_yes)
+        repeated, requested = prompt.translate_input("\x1b[B")
+        self.assertEqual(repeated, "")
+        self.assertFalse(requested)
+        translated, requested = prompt.translate_input("\r")
+        self.assertEqual(translated, "\r")
+        self.assertFalse(requested)
+        self.assertFalse(prompt.selector_finished())
+
+    def test_selector_command_publishes_exit_marker_after_child_exits(self):
+        import subprocess
+
+        import app.main as main
+        from app.providers import create_provider
+
+        old_provider = main.provider
+        try:
+            main.provider = create_provider(
+                "embedded-steam",
+                working_directory="/tmp",
+                container_user="",
+                command="/bin/true prefill",
+                embedded_binary="/bin/true",
+            )
+            command = main.selector_terminal_command()
+            result = subprocess.run(
+                ["bash", "-lc", command],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"{main.SELECTOR_EXIT_MARKER}0", result.stdout)
+        finally:
+            main.provider = old_provider
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class LegacySteamStateMergeTests(unittest.TestCase):
+    def test_depot_history_merge_preserves_newer_embedded_values(self):
+        from app.main import merge_json_state
+
+        legacy = {
+            "1071871": {"manifestId": "old-biped"},
+            "730": {"manifestId": "old-cs2"},
+        }
+        current = {
+            "1071871": {"manifestId": "new-biped"},
+            "570": {"manifestId": "new-dota"},
+        }
+        merged = merge_json_state(legacy, current)
+        self.assertEqual(merged["1071871"]["manifestId"], "new-biped")
+        self.assertIn("730", merged)
+        self.assertIn("570", merged)
+
+    def test_list_history_merge_deduplicates_by_depot_id(self):
+        from app.main import merge_json_state
+
+        legacy = [
+            {"depotId": 1071871, "manifestId": "old-biped"},
+            {"depotId": 730, "manifestId": "old-cs2"},
+        ]
+        current = [{"depotId": 1071871, "manifestId": "new-biped"}]
+        merged = merge_json_state(legacy, current)
+        by_depot = {item["depotId"]: item for item in merged}
+        self.assertEqual(by_depot[1071871]["manifestId"], "new-biped")
+        self.assertIn(730, by_depot)

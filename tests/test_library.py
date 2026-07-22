@@ -324,3 +324,69 @@ Downloading.. 100% 00:00:00 34.4 / 34.4 GiB 800 Mbit/s
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QueueRenderingRegressionTests(unittest.TestCase):
+    def test_live_download_progress_outranks_stale_queued_item(self):
+        from app.library import GameQueueItem, build_library_response
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = LibraryStore(Path(directory) / "library.json")
+            queue = QueueStore(Path(directory) / "queue.json")
+            store.replace_selected(
+                [SelectedApp(app_id=1071870, name="Biped", download_size="1.48 GiB")],
+                "2026-07-20T20:08:31+00:00",
+            )
+            store.update_by_app_id(
+                1071870,
+                status="downloading",
+                progress=59.0,
+                downloaded="0.87 GiB",
+                total="1.48 GiB",
+                message="Downloading into LANCache now.",
+            )
+            queue.enqueue(
+                GameQueueItem(
+                    queue_id="queued-biped",
+                    app_id=1071870,
+                    app_name="Biped",
+                    requested_at="2026-07-20T20:08:30+00:00",
+                )
+            )
+
+            game = build_library_response(store, queue).games[0]
+            self.assertEqual(game.status, "downloading")
+            self.assertEqual(game.progress, 59.0)
+            self.assertIsNone(game.queue_position)
+
+    def test_genuine_queue_card_does_not_reuse_old_progress(self):
+        from app.library import GameQueueItem, build_library_response
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = LibraryStore(Path(directory) / "library.json")
+            queue = QueueStore(Path(directory) / "queue.json")
+            store.replace_selected(
+                [SelectedApp(app_id=1071870, name="Biped", download_size="1.48 GiB")],
+                "2026-07-20T20:08:31+00:00",
+            )
+            store.update_by_app_id(
+                1071870,
+                status="selected",
+                progress=59.0,
+                downloaded="0.87 GiB",
+                total="1.48 GiB",
+            )
+            queue.enqueue(
+                GameQueueItem(
+                    queue_id="queued-biped",
+                    app_id=1071870,
+                    app_name="Biped",
+                    requested_at="2026-07-20T20:08:30+00:00",
+                )
+            )
+
+            game = build_library_response(store, queue).games[0]
+            self.assertEqual(game.status, "queued")
+            self.assertIsNone(game.progress)
+            self.assertIsNone(game.downloaded)
+            self.assertIsNone(game.total)

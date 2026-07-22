@@ -1078,11 +1078,30 @@ def build_library_response(
     rendered: list[GameRecord] = []
     for game in games:
         changes: dict[str, object] = {}
-        if game.app_id in running_ids and game.status != "downloading":
-            changes.update(status="checking", message="Checking Steam and applying an update if needed.")
+        # Live provider output is authoritative. A queued record can coexist
+        # briefly with a full run that is already processing the same app; do
+        # not turn a real 59% download back into a contradictory "Queued" card.
+        if game.status == "downloading":
+            changes.update(queue_position=None)
+        elif game.app_id in running_ids:
+            changes.update(
+                status="checking",
+                progress=None,
+                downloaded=None,
+                total=None,
+                speed=None,
+                eta=None,
+                queue_position=None,
+                message="Checking Steam and applying an update if needed.",
+            )
         elif game.app_id in queue_positions:
             changes.update(
                 status="queued",
+                progress=None,
+                downloaded=None,
+                total=None,
+                speed=None,
+                eta=None,
                 queue_position=queue_positions[game.app_id],
                 message=f"Queued at position {queue_positions[game.app_id]}.",
             )

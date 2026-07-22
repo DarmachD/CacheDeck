@@ -6,8 +6,10 @@ import json
 import ipaddress
 import os
 import pty
+import re
 import select
 import shlex
+import shutil
 import signal
 import struct
 import subprocess
@@ -56,6 +58,7 @@ from app.library import (
 )
 
 APP_NAME: Final = "CacheDeck"
+SELECTOR_EXIT_MARKER: Final = "__CACHEDECK_SELECTOR_EXIT__:"
 
 
 def bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -439,6 +442,80 @@ queue_store = SQLiteQueueStore(state_database)
 
 def _terminal_name_key(value: str) -> str:
     return normalise_name(value)
+
+
+@dataclass
+class SelectorPromptController:
+    """Keep SteamPrefill's selector from launching an unmanaged inline run.
+
+    SteamPrefill asks whether it should immediately prefill after saving the
+    selected-app config. A Yes answer would run inside the browser-owned PTY,
+    bypassing CacheDeck's detached-job retry, history and recovery machinery.
+    CacheDeck therefore translates Yes into No for SteamPrefill and performs a
+    managed server-side handoff after the selector process has exited.
+    """
+
+    active: bool = False
+    choice_yes: bool = True
+    handoff_requested: bool = False
+    awaiting_exit: bool = False
+
+    def observe_output(self, output: str) -> bool:
+        if self.active or self.awaiting_exit:
+            return False
+        if "run prefill now?" not in clean_terminal_output(output).casefold():
+            return False
+        self.active = True
+        self.choice_yes = True
+        return True
+
+    def translate_input(self, data: str) -> tuple[str, bool]:
+        if not self.active:
+            return data, False
+
+        if "\x1b[B" in data or "\x1bOB" in data:
+            if self.choice_yes:
+                self.choice_yes = False
+                return data, False
+            # Keep Spectre and CacheDeck in sync by clamping the two-choice
+            # selector instead of allowing an extra keypress to wrap around.
+            return "", False
+        if "\x1b[A" in data or "\x1bOA" in data:
+            if not self.choice_yes:
+                self.choice_yes = True
+                return data, False
+            return "", False
+
+        if "\r" in data or "\n" in data:
+            requested = self.choice_yes
+            self.active = False
+            self.awaiting_exit = True
+            self.handoff_requested = requested
+            if requested:
+                # Spectre defaults to Yes. Move to No before submitting so the
+                # SteamPrefill child exits cleanly; CacheDeck starts the detached
+                # managed run after receiving SELECTOR_EXIT_MARKER.
+                return "\x1b[B\r", True
+            return data, False
+
+        return data, False
+
+    def selector_finished(self) -> bool:
+        requested = self.handoff_requested
+        self.active = False
+        self.choice_yes = True
+        self.handoff_requested = False
+        self.awaiting_exit = False
+        return requested
+
+
+def selector_terminal_command() -> str:
+    """Wrap the interactive selector with a reliable completion marker."""
+    command = provider.select_games_command
+    return (
+        f"{command}; __cachedeck_selector_code=$?; "
+        f"printf '\\n{SELECTOR_EXIT_MARKER}%s\\n' \"$__cachedeck_selector_code\""
+    )
 
 
 @dataclass
@@ -1561,7 +1638,7 @@ async def run_diagnostics() -> DiagnosticsResult:
                 name="Docker socket",
                 ok=True,
                 detail=(
-                    "Optional socket is mounted for legacy selection import."
+                    "Optional socket is mounted for legacy SteamPrefill state import."
                     if socket_path.exists()
                     else "Not required by the embedded provider."
                 ),
@@ -1725,6 +1802,74 @@ def embedded_selected_config_path() -> Path:
     return Path(PREFILL_DIR) / "Config" / "selectedAppsToPrefill.json"
 
 
+def embedded_download_history_path() -> Path:
+    return Path(PREFILL_DIR) / "Config" / "successfullyDownloadedDepots.json"
+
+
+def _json_item_identity(value: object) -> str:
+    if isinstance(value, dict):
+        for key in ("depotId", "depot_id", "DepotId", "depotID", "id", "Id"):
+            if key in value:
+                return f"depot:{value[key]}"
+    try:
+        return "json:" + json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return f"repr:{value!r}"
+
+
+def merge_json_state(legacy: object, current: object) -> object:
+    """Merge portable SteamPrefill state while preferring newer embedded values."""
+    if isinstance(legacy, dict) and isinstance(current, dict):
+        merged = dict(legacy)
+        for key, value in current.items():
+            merged[key] = merge_json_state(merged[key], value) if key in merged else value
+        return merged
+    if isinstance(legacy, list) and isinstance(current, list):
+        merged: dict[str, object] = {}
+        order: list[str] = []
+        for item in [*legacy, *current]:
+            identity = _json_item_identity(item)
+            if identity not in merged:
+                order.append(identity)
+            merged[identity] = item
+        return [merged[identity] for identity in order]
+    # The embedded state was written more recently, so preserve it whenever the
+    # serialised shapes differ or the value is scalar.
+    return current
+
+
+def write_embedded_download_history(raw_legacy: str) -> tuple[Path, int, int]:
+    try:
+        legacy = json.loads(raw_legacy)
+    except json.JSONDecodeError as exc:
+        raise ValueError("The old SteamPrefill download-history file is not valid JSON.") from exc
+    if not isinstance(legacy, (dict, list)):
+        raise ValueError("The old SteamPrefill download-history file has an unsupported format.")
+
+    destination = embedded_download_history_path()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    current: object
+    if destination.exists():
+        try:
+            current = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {} if isinstance(legacy, dict) else []
+        backup = destination.with_suffix(destination.suffix + ".pre-v0.8.4.bak")
+        if not backup.exists():
+            with contextlib.suppress(OSError):
+                shutil.copy2(destination, backup)
+    else:
+        current = {} if isinstance(legacy, dict) else []
+
+    merged = merge_json_state(legacy, current)
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination)
+    legacy_entries = len(legacy)
+    merged_entries = len(merged) if isinstance(merged, (dict, list)) else 0
+    return destination, legacy_entries, merged_entries
+
+
 def write_embedded_selected_app_ids(app_ids: list[int]) -> Path:
     if not provider_is_local():
         raise RuntimeError("The active provider does not use a local selected-app file.")
@@ -1756,42 +1901,83 @@ def seed_embedded_selection_from_database() -> int:
     return len(set(app_ids))
 
 
-async def import_legacy_selected_apps() -> tuple[int, str]:
-    if not provider_is_local():
-        raise HTTPException(status_code=409, detail="Legacy selection import is only available for the embedded provider.")
-    candidates = ("./Config/selectedAppsToPrefill.json", "/Config/selectedAppsToPrefill.json")
+async def read_legacy_container_file(candidates: tuple[str, ...]) -> CommandResult:
     command = (
         "for candidate in "
         + " ".join(shlex.quote(item) for item in candidates)
         + '; do if [ -r "$candidate" ]; then cat "$candidate"; exit 0; fi; done; exit 44'
     )
     try:
-        result = await run_process_async(
+        return await run_process_async(
             ["docker", "exec", LEGACY_TARGET_CONTAINER, "bash", "-lc", command],
             timeout=20,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(status_code=502, detail=f"Unable to inspect {LEGACY_TARGET_CONTAINER}: {exc}") from exc
-    if result.returncode != 0:
+
+
+async def import_legacy_steam_state() -> dict[str, Any]:
+    if not provider_is_local():
+        raise HTTPException(status_code=409, detail="Legacy SteamPrefill import is only available for the embedded provider.")
+
+    selected_result = await read_legacy_container_file(
+        (
+            "./Config/selectedAppsToPrefill.json",
+            "/Config/selectedAppsToPrefill.json",
+            "/lancacheprefill/SteamPrefill/Config/selectedAppsToPrefill.json",
+        )
+    )
+    if selected_result.returncode != 0:
         raise HTTPException(
             status_code=404,
-            detail=result.stderr.strip() or f"No selected-app config was found in {LEGACY_TARGET_CONTAINER}.",
+            detail=selected_result.stderr.strip()
+            or f"No selected-app config was found in {LEGACY_TARGET_CONTAINER}.",
         )
-    app_ids = parse_selected_app_ids_config(result.stdout)
+    app_ids = parse_selected_app_ids_config(selected_result.stdout)
     if not app_ids:
         raise HTTPException(status_code=422, detail="The legacy selected-app file contained no usable Steam app IDs.")
-    destination = write_embedded_selected_app_ids(app_ids)
+    selection_destination = write_embedded_selected_app_ids(app_ids)
     selected_apps_from_ids(app_ids)
-    state_database.append_event(
-        "engine.legacy_selection_imported",
-        provider=provider.provider_id,
-        payload={
-            "apps": len(app_ids),
-            "legacy_target": LEGACY_TARGET_CONTAINER,
-            "destination": str(destination),
-        },
+
+    history_destination: Path | None = None
+    history_entries = 0
+    merged_history_entries = 0
+    history_result = await read_legacy_container_file(
+        (
+            "./Config/successfullyDownloadedDepots.json",
+            "/Config/successfullyDownloadedDepots.json",
+            "/lancacheprefill/SteamPrefill/Config/successfullyDownloadedDepots.json",
+        )
     )
-    return len(app_ids), str(destination)
+    if history_result.returncode == 0 and history_result.stdout.strip():
+        try:
+            history_destination, history_entries, merged_history_entries = write_embedded_download_history(
+                history_result.stdout
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    payload = {
+        "apps": len(app_ids),
+        "legacy_target": LEGACY_TARGET_CONTAINER,
+        "selection_destination": str(selection_destination),
+        "history_imported": history_destination is not None,
+        "history_entries": history_entries,
+        "merged_history_entries": merged_history_entries,
+        "history_destination": str(history_destination) if history_destination else None,
+    }
+    state_database.append_event(
+        "engine.legacy_state_imported",
+        provider=provider.provider_id,
+        payload=payload,
+    )
+    return payload
+
+
+async def import_legacy_selected_apps() -> tuple[int, str]:
+    """Backward-compatible helper retained for callers from the v0.8 beta."""
+    result = await import_legacy_steam_state()
+    return int(result["apps"]), str(result["selection_destination"])
 
 
 async def read_selected_app_ids_from_config() -> list[int]:
@@ -2251,7 +2437,18 @@ async def sync_library_activity(*, deep_scan: bool = False) -> None:
         return
 
     if latest.state == "completed" and latest.scope == "full":
-        library_store.mark_all_downloaded(latest.job_id, latest.finished_at or utc_now())
+        finished = latest.finished_at or utc_now()
+        library_store.mark_all_downloaded(latest.job_id, finished)
+        # A manually queued game may also have been covered by the full run. Do
+        # not immediately launch a second targeted check for every such item.
+        for queued_item in queue_store.active():
+            queue_store.update(
+                queued_item.queue_id,
+                state="completed",
+                job_id=latest.job_id,
+                finished_at=finished,
+                message="Covered by the successful full prefill run.",
+            )
 
     queue_items = queue_store.list()
     running_item = next((item for item in queue_items if item.state == "running"), None)
@@ -2717,7 +2914,7 @@ async def engine_status() -> EngineStatus:
     return EngineStatus(
         provider={
             **provider.describe(),
-            "select_games_command": provider.select_games_command,
+            "select_games_command": selector_terminal_command(),
         },
         database_path=str(DATABASE_FILE),
         schema_version=SCHEMA_VERSION,
@@ -2767,12 +2964,26 @@ async def retry_legacy_migration() -> dict[str, Any]:
 
 @app.post("/api/engine/import-legacy-selection")
 async def import_legacy_selection_endpoint() -> dict[str, Any]:
-    count, destination = await import_legacy_selected_apps()
+    if (await get_raw_prefill_status()).running:
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the current prefill before importing old SteamPrefill state.",
+        )
+    result = await import_legacy_steam_state()
+    history_message = (
+        f" and merged {result['history_entries']} old depot-history entries"
+        if result["history_imported"]
+        else " (no old depot-history file was found)"
+    )
     return {
         "ok": True,
-        "imported": count,
-        "destination": destination,
-        "message": f"Imported {count} selected Steam apps from {LEGACY_TARGET_CONTAINER}.",
+        "imported": result["apps"],
+        "destination": result["selection_destination"],
+        **result,
+        "message": (
+            f"Imported {result['apps']} selected Steam apps{history_message} "
+            f"from {LEGACY_TARGET_CONTAINER}."
+        ),
     }
 
 
@@ -3469,7 +3680,22 @@ async def terminal(websocket: WebSocket) -> None:
     )
     activity_buffer = ""
     selection_refresh_task: asyncio.Task[None] | None = None
+    selector_handoff_task: asyncio.Task[None] | None = None
     transient_warning_sent = False
+    selector_marker_tail = ""
+    selector_prompt_tail = ""
+    selector_prompt = SelectorPromptController()
+    terminal_send_lock = asyncio.Lock()
+
+    async def send_terminal_text(text: str) -> None:
+        async with terminal_send_lock:
+            with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+                await websocket.send_text(text)
+
+    async def send_terminal_bytes(data: bytes) -> None:
+        async with terminal_send_lock:
+            with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+                await websocket.send_bytes(data)
 
     async def refresh_terminal_selection() -> None:
         """Load the selector's saved app IDs without starting a manifest scan."""
@@ -3498,14 +3724,89 @@ async def terminal(websocket: WebSocket) -> None:
                 activity_tracker.observe(activity_buffer)
             return
 
+    async def start_managed_selector_handoff(exit_code: int) -> None:
+        """Turn SteamPrefill's inline Yes answer into a managed CacheDeck job."""
+        if exit_code != 0:
+            await send_terminal_text(
+                "\r\n\x1b[31mCacheDeck: the selector exited before the managed "
+                f"prefill handoff could start (exit code {exit_code}).\x1b[0m\r\n"
+            )
+            return
+
+        app_ids: list[int] = []
+        for delay in (0.05, 0.2, 0.5, 1.0):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                app_ids = await read_selected_app_ids_from_config()
+            except (OSError, subprocess.TimeoutExpired):
+                app_ids = []
+            if app_ids:
+                selected_apps_from_ids(app_ids)
+                start_metadata_refresh()
+                break
+
+        if not app_ids:
+            await send_terminal_text(
+                "\r\n\x1b[31mCacheDeck: the selection finished, but the saved "
+                "Steam app list could not be read. Refresh selected games before "
+                "starting a prefill.\x1b[0m\r\n"
+            )
+            return
+
+        await send_terminal_text(
+            "\r\n\x1b[33mCacheDeck: selection saved. Starting the prefill as a "
+            "managed background job so retries, history and browser-independent "
+            "execution remain available.\x1b[0m\r\n"
+        )
+        try:
+            result = await launch_prefill_job()
+        except HTTPException as exc:
+            detail = str(exc.detail)
+            state_database.append_event(
+                "selector.handoff_failed",
+                provider=provider.provider_id,
+                payload={"detail": detail, "selected_apps": len(app_ids)},
+            )
+            await send_terminal_text(
+                f"\r\n\x1b[31mCacheDeck: managed prefill could not start: "
+                f"{detail}\x1b[0m\r\n"
+            )
+            return
+        except Exception as exc:
+            state_database.append_event(
+                "selector.handoff_failed",
+                provider=provider.provider_id,
+                payload={"detail": str(exc), "selected_apps": len(app_ids)},
+            )
+            await send_terminal_text(
+                "\r\n\x1b[31mCacheDeck: unexpected error while starting the "
+                f"managed prefill: {exc}\x1b[0m\r\n"
+            )
+            return
+
+        state_database.append_event(
+            "selector.handoff_started",
+            provider=provider.provider_id,
+            job_id=result.status.job_id,
+            payload={"selected_apps": len(app_ids)},
+        )
+        await send_terminal_text(
+            "\r\n\x1b[32mCacheDeck: managed prefill accepted. You may close this "
+            "console; the job will continue on the server.\x1b[0m\r\n"
+        )
+
     async def pump_output() -> None:
-        nonlocal activity_buffer, selection_refresh_task, transient_warning_sent
+        nonlocal activity_buffer, selection_refresh_task, selector_handoff_task
+        nonlocal selector_marker_tail, selector_prompt_tail, transient_warning_sent
         loop = asyncio.get_running_loop()
-        while process.poll() is None:
+        while True:
             ready, _, _ = await loop.run_in_executor(
                 None, lambda: select.select([master_fd], [], [], 0.2)
             )
             if not ready:
+                if process.poll() is not None:
+                    break
                 continue
             try:
                 data = os.read(master_fd, 8192)
@@ -3515,6 +3816,33 @@ async def terminal(websocket: WebSocket) -> None:
                 break
 
             decoded = data.decode("utf-8", errors="replace")
+            prompt_scan = selector_prompt_tail + decoded
+            selector_prompt.observe_output(prompt_scan)
+            selector_prompt_tail = prompt_scan[-64:]
+
+            # The selector command prints a marker only after the SteamPrefill
+            # child has fully exited. This makes the managed handoff safe: the
+            # detached prefill cannot race the still-running selector process.
+            previous_tail_length = len(selector_marker_tail)
+            marker_scan = selector_marker_tail + decoded
+            marker_pattern = re.compile(re.escape(SELECTOR_EXIT_MARKER) + r"(-?\d+)")
+            for match in marker_pattern.finditer(marker_scan):
+                if match.end() <= previous_tail_length:
+                    continue
+                exit_code = int(match.group(1))
+                handoff_requested = selector_prompt.selector_finished()
+                selector_prompt_tail = ""
+                if handoff_requested and (
+                    selector_handoff_task is None or selector_handoff_task.done()
+                ):
+                    selector_handoff_task = asyncio.create_task(
+                        start_managed_selector_handoff(exit_code)
+                    )
+            selector_marker_tail = marker_scan[-(len(SELECTOR_EXIT_MARKER) + 32):]
+            decoded = marker_pattern.sub("", decoded)
+            if not decoded:
+                continue
+
             # Keep only a bounded in-memory tail. Never persist the raw terminal
             # transcript because it can contain Steam login/Guard input.
             activity_buffer = (activity_buffer + decoded)[-120_000:]
@@ -3536,12 +3864,11 @@ async def terminal(websocket: WebSocket) -> None:
                 )
             if transient_metadata_error and not transient_warning_sent:
                 transient_warning_sent = True
-                with contextlib.suppress(RuntimeError):
-                    await websocket.send_text(
-                        "\r\n\x1b[33mCacheDeck: Steam's app-metadata request timed out. "
-                        "Any saved selection is being recovered automatically; "
-                        "no game has been marked as missing or failed.\x1b[0m\r\n"
-                    )
+                await send_terminal_text(
+                    "\r\n\x1b[33mCacheDeck: Steam's app-metadata request timed out. "
+                    "Any saved selection is being recovered automatically; "
+                    "no game has been marked as missing or failed.\x1b[0m\r\n"
+                )
             if any(
                 token in lowered
                 for token in (
@@ -3556,10 +3883,7 @@ async def terminal(websocket: WebSocket) -> None:
                 with contextlib.suppress(Exception):
                     activity_tracker.observe(activity_buffer)
 
-            try:
-                await websocket.send_bytes(data)
-            except RuntimeError:
-                break
+            await send_terminal_bytes(decoded.encode("utf-8", errors="replace"))
 
     output_task = asyncio.create_task(pump_output())
     try:
@@ -3578,14 +3902,25 @@ async def terminal(websocket: WebSocket) -> None:
                     except (ValueError, OSError):
                         pass
                 else:
-                    os.write(master_fd, text.encode("utf-8"))
+                    translated, _ = selector_prompt.translate_input(text)
+                    os.write(master_fd, translated.encode("utf-8"))
                 continue
             data = message.get("bytes")
             if data is not None:
-                os.write(master_fd, data)
-    except WebSocketDisconnect:
+                decoded_input = data.decode("utf-8", errors="replace")
+                translated, _ = selector_prompt.translate_input(decoded_input)
+                os.write(master_fd, translated.encode("utf-8"))
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
+        # When the browser closes immediately after accepting the selector's
+        # default Yes option, give the selector a brief chance to exit and let
+        # the output pump create the detached handoff before terminating the PTY.
+        if selector_prompt.awaiting_exit and selector_prompt.handoff_requested:
+            for _ in range(50):
+                if selector_handoff_task is not None or not selector_prompt.awaiting_exit:
+                    break
+                await asyncio.sleep(0.1)
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGTERM)
         with contextlib.suppress(asyncio.TimeoutError):
@@ -3604,6 +3939,9 @@ async def terminal(websocket: WebSocket) -> None:
             selection_refresh_task = asyncio.create_task(refresh_terminal_selection())
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await selection_refresh_task
+        if selector_handoff_task is not None:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await selector_handoff_task
         with contextlib.suppress(Exception):
             activity_tracker.observe(activity_buffer)
         with contextlib.suppress(OSError):

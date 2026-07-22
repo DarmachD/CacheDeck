@@ -626,6 +626,7 @@
       <details id="console-details" class="card">
         <summary>Interactive console <span id="terminal-status" class="connection">Not opened</span></summary>
         <div class="details-body">
+          <p class="muted">When the selector asks <strong>Run prefill now?</strong>, choosing <strong>Yes</strong> hands the run to CacheDeck's managed background job. Choosing <strong>No</strong> saves the selection only.</p>
           <div class="button-row" style="margin-bottom:10px">
             <button id="clear-terminal" type="button">Clear terminal</button>
             <button id="reconnect-terminal" type="button">Reconnect terminal</button>
@@ -673,7 +674,7 @@
           <div class="stat"><dt>Managed schedules</dt><dd id="engine-schedules">—</dd></div>
           <div class="stat"><dt>v0.6 state import</dt><dd id="engine-migration">—</dd></div>
         </dl>
-        <div class="button-row"><button id="backup-database" type="button">Backup database</button><button id="repair-engine" type="button">Repair state</button><button id="import-legacy-selection" type="button" hidden>Import old selection</button></div>
+        <div class="button-row"><button id="backup-database" type="button">Backup database</button><button id="repair-engine" type="button">Repair state</button><button id="import-legacy-selection" type="button" hidden>Import old SteamPrefill state</button></div>
       </div>
 
       <div class="card">
@@ -716,7 +717,7 @@
         <h2>How it behaves</h2>
         <div class="help">
           <p><strong>Start prefill</strong> creates a server-side job. Closing this page or shutting the laptop does not stop it.</p>
-          <p><strong>Select games</strong> opens the active Steam engine selector. The interactive console is only created when needed.</p>
+          <p><strong>Select games</strong> opens the active Steam engine selector. A <strong>Yes</strong> answer at the final prompt is handed to CacheDeck's managed background runner instead of remaining attached to the terminal.</p>
           <p id="security-help">Keep CacheDeck LAN-only. The embedded provider does not require Docker-socket access.</p>
         </div>
       </div>
@@ -1189,8 +1190,8 @@
     try {
       const response = await fetch("/api/engine/import-legacy-selection", { method: "POST" });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Unable to import the old selected-game list.");
-      showToast(data.message || `Imported ${data.imported || 0} selected games.`);
+      if (!response.ok) throw new Error(data.detail || "Unable to import the old SteamPrefill state.");
+      showToast(data.message || `Imported ${data.imported || 0} selected games and their available depot history.`);
       await loadLibrary(true);
       await updateEngine();
     } catch (error) {

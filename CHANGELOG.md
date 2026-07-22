@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.4
+
+- Fixed live SteamPrefill progress being visually overridden by a stale per-game queue item, which could show a game as **Queued** while its progress bar was actively advancing.
+- Cleared stale transfer fields from genuinely queued/checking cards so old percentages cannot masquerade as current activity.
+- Expanded **Import old selection** into **Import old SteamPrefill state**, migrating and safely merging `successfullyDownloadedDepots.json` as well as `selectedAppsToPrefill.json`.
+- Preserved the embedded engine's newer depot-history values during a merge and created a one-time pre-v0.8.4 backup before changing an existing history file.
+- Marked per-game queue entries as completed when a successful full prefill run already covered them, preventing an immediate second targeted pass.
+- Updated the bundled SteamPrefill core from 3.6.0 to 3.6.1.
+- Added regression tests for live-progress priority, stale queued progress and portable depot-history merging.
+
+## 0.8.3
+
+- Fixed **Run prefill now? → Yes** launching SteamPrefill inside the browser-owned interactive terminal, where transient Steam metadata errors bypassed CacheDeck's managed retry and recovery logic.
+- Added a selector-to-managed-job handoff: CacheDeck safely closes the selector with **No**, waits for the selector process to exit, then starts the requested prefill through the detached server-side job runner.
+- Preserved an explicit **No** choice as selection-only behaviour.
+- Added a selector exit marker so the managed job cannot race or overlap the interactive SteamPrefill process.
+- Drained the terminal PTY after the selector process exits so very fast selector completions cannot lose the exit marker before handoff.
+- Added terminal WebSocket send serialisation to prevent output and handoff messages from writing concurrently.
+- Fixed the terminal endpoint raising an ASGI `RuntimeError` after a disconnect and preserved a pending Yes-to-managed handoff when the browser closes immediately.
+- Added structured `selector.handoff_started` and `selector.handoff_failed` activity events.
+- Added tests for default-Yes translation, explicit-No handling and selector-exit marker publication.
+
 ## 0.8.2
 
 - Recovered `selectedAppsToPrefill.json` after SteamPrefill's interactive selector saves the selection but crashes during its optional post-selection app-metadata scan.

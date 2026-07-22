@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.title="CacheDeck" \
       org.opencontainers.image.licenses="MIT"
 
 ARG VERSION=""
-ARG STEAMPREFILL_VERSION="3.6.0"
+ARG STEAMPREFILL_VERSION="3.6.1"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
